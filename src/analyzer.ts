@@ -19,12 +19,15 @@ const ALL_COMMENTS_PATTERN = /(\/\*\*[\s\S]*?\*\/|\/\/.*)/g;
 const NON_WHITESPACE_PATTERN = /\S/g;
 const BRACE_PATTERN = /[{}]/g;
 
+// Time-slicing configuration
+const YIELD_INTERVAL_MS = 15; // Yield every 15ms to keep UI responsive
+
 /**
  * Analyzes text to find specific tags (default @ai-gen) that are not marked as 'ok'.
  * Returns the character offsets needed to create VS Code diagnostics.
- * Uses optimized Regex scanning (O(N)) to minimize main-thread blocking.
+ * Uses optimized Regex scanning (O(N)) AND time-slicing to prevent main-thread blocking.
  */
-export function findAiGenDiagnostics(text: string, options: Partial<AnalyzerOptions> = {}): DiagnosticMatch[] {
+export async function findAiGenDiagnostics(text: string, options: Partial<AnalyzerOptions> = {}, token?: { isCancellationRequested: boolean }): Promise<DiagnosticMatch[]> {
   const { 
     detectInline = true, 
     tag = '@ai-gen', 
@@ -34,22 +37,30 @@ export function findAiGenDiagnostics(text: string, options: Partial<AnalyzerOpti
   
   const matches: DiagnosticMatch[] = [];
   
-  // Normalize allowed states to lowercase for case-insensitive comparison
-  // Set lookup is O(1) vs Array includes O(N) - faster for many allowed states
   const allowedStatesSet = new Set(allowedStates.map(s => s.toLowerCase()));
   const rejectedStatesSet = new Set(rejectedStates.map(s => s.toLowerCase()));
   
-  // Select the appropriate pattern
-  // We reset lastIndex to ensure clean run if we were to reuse global instances (safeguard)
   const mainPattern = detectInline ? ALL_COMMENTS_PATTERN : DOC_BLOCK_PATTERN;
   mainPattern.lastIndex = 0;
 
-  // Compile tag regex once per call
   const escapedTag = escapeRegExp(tag);
-  const tagRegex = new RegExp(`${escapedTag}\\s*(.*)`, 'i');
+  const tagRegex = new RegExp(`${escapedTag}\s*(.*)`, 'i');
 
+  let startTime = Date.now();
   let match;
+  
   while ((match = mainPattern.exec(text)) !== null) {
+    // Cancellation check
+    if (token?.isCancellationRequested) {
+      return [];
+    }
+
+    // Time-slicing check
+    if (Date.now() - startTime > YIELD_INTERVAL_MS) {
+      await new Promise(resolve => setTimeout(resolve, 0)); // Yield to event loop
+      startTime = Date.now(); // Reset timer
+    }
+
     const fullComment = match[0];
     const commentStartOffset = match.index;
     const commentEndOffset = commentStartOffset + fullComment.length;
@@ -58,26 +69,18 @@ export function findAiGenDiagnostics(text: string, options: Partial<AnalyzerOpti
     const tagMatch = tagRegex.exec(fullComment);
 
     if (tagMatch) {
-      // Fast path: Clean and check state
       const rawContent = tagMatch[1];
-      // Optimization: Only run replace/trim if strictly necessary
-      // But we need to remove trailing '*/' for docblocks.
       const tagContent = rawContent.replace(/\s*\*\/$/, '').trim().toLowerCase();
 
-      // Check for Allowed State
       if (allowedStatesSet.has(tagContent)) {
         continue;
       }
 
-      // Determine Type (Rejected vs Warning)
       const type: 'warning' | 'rejected' = rejectedStatesSet.has(tagContent) ? 'rejected' : 'warning';
 
-      // 1. Calculate Tag Location
       const tagStartOffset = commentStartOffset + tagMatch.index;
       const tagEndOffset = tagStartOffset + tagMatch[0].length;
 
-      // 2. Calculate Code Block Location
-      // Optimization: Use Regex to jump to next non-whitespace instead of loop
       NON_WHITESPACE_PATTERN.lastIndex = commentEndOffset;
       const codeMatch = NON_WHITESPACE_PATTERN.exec(text);
       
@@ -85,13 +88,10 @@ export function findAiGenDiagnostics(text: string, options: Partial<AnalyzerOpti
         const codeStartOffset = codeMatch.index;
         let codeEndOffset: number;
 
-        // Special handling for inline comments: Highlight ONLY the next line
-        // We check start of fullComment. 'match[0]' is already the full match.
         if (fullComment.startsWith('//')) {
           const nextNewline = text.indexOf('\n', codeStartOffset);
           codeEndOffset = nextNewline !== -1 ? nextNewline : text.length;
         } else {
-          // Standard DocBlock: Use smart block detection
           codeEndOffset = findBlockEndOffset(text, codeStartOffset);
         }
         
@@ -110,31 +110,24 @@ export function findAiGenDiagnostics(text: string, options: Partial<AnalyzerOpti
 }
 
 function findBlockEndOffset(text: string, startOffset: number): number {
-  // 1. Heuristic: Check for single-line statement (ends with ';')
-  // We scan manually here because it's usually very short (immediate next few chars).
-  // Using Regex overhead might be higher for looking at 10-20 chars.
   const len = text.length;
   let j = startOffset;
   
+  // Fast heuristic scan
   while (j < len) {
       const char = text.charCodeAt(j);
-      // 59 = ';', 123 = '{', 10 = '\n'
       if (char === 123) { // '{'
-          break; // Found block start
+          break; 
       }
       if (char === 59) { // ';'
-          return j + 1; // Found statement end
+          return j + 1; 
       }
       if (char === 10) { // '\n'
-          // Newline before brace or semicolon. 
-          // Stop heuristic, assume block logic needed.
           break;
       }
       j++;
   }
 
-  // 2. Brace Counting using Regex Jump
-  // This is much faster for large blocks as it skips all non-brace characters via C++ engine.
   BRACE_PATTERN.lastIndex = startOffset;
   
   let braceDepth = 0;

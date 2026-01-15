@@ -2,7 +2,7 @@ import { describe, it, expect } from 'vitest';
 import { findAiGenDiagnostics } from './analyzer';
 
 describe('AI Gen Analyzer', () => {
-  it('should detect @ai-gen tag without "ok"', () => {
+  it('should detect @ai-gen tag without "ok"', async () => {
     const code = `
 /**
  * Some comment
@@ -12,7 +12,7 @@ function test() {
   console.log('hello');
 }
 `;
-    const matches = findAiGenDiagnostics(code);
+    const matches = await findAiGenDiagnostics(code);
     expect(matches).toHaveLength(1);
     expect(matches[0].type).toBe('warning');
     
@@ -20,37 +20,37 @@ function test() {
     expect(matches[0].tagStartOffset).toBeGreaterThanOrEqual(tagIndex);
   });
 
-  it('should ignore @ai-gen tag with "ok"', () => {
+  it('should ignore @ai-gen tag with "ok"', async () => {
     const code = `
 /**
  * @ai-gen ok
  */
 const x = 1;
 `;
-    const matches = findAiGenDiagnostics(code);
+    const matches = await findAiGenDiagnostics(code);
     expect(matches).toHaveLength(0);
   });
 
-  it('should detect @ai-gen with other text', () => {
+  it('should detect @ai-gen with other text', async () => {
     const code = `
 /**
  * @ai-gen pending review
  */
 class A {}
 `;
-    const matches = findAiGenDiagnostics(code);
+    const matches = await findAiGenDiagnostics(code);
     expect(matches).toHaveLength(1);
     expect(matches[0].type).toBe('warning');
   });
 
-  it('should calculate code range for single line statement', () => {
+  it('should calculate code range for single line statement', async () => {
     const code = `
 /**
  * @ai-gen
  */
 const x = 5;
 `;
-    const matches = findAiGenDiagnostics(code);
+    const matches = await findAiGenDiagnostics(code);
     expect(matches).toHaveLength(1);
     
     const codeStart = code.indexOf('const x = 5;');
@@ -60,7 +60,7 @@ const x = 5;
     expect(matches[0].codeEndOffset).toBe(codeEnd);
   });
 
-  it('should calculate code range correctly for function block (DocBlock)', () => {
+  it('should calculate code range correctly for function block (DocBlock)', async () => {
     const code = `
 /**
  * @ai-gen
@@ -70,7 +70,7 @@ function target() {
   return true;
 }
 `;
-    const matches = findAiGenDiagnostics(code);
+    const matches = await findAiGenDiagnostics(code);
     expect(matches).toHaveLength(1);
     
     const codeStart = code.indexOf('function target() {');
@@ -80,7 +80,7 @@ function target() {
     expect(matches[0].codeEndOffset).toBe(codeEnd);
   });
 
-  it('should handle nested braces correctly', () => {
+  it('should handle nested braces correctly', async () => {
     const code = `
 /** @ai-gen */
 function complex() {
@@ -89,42 +89,42 @@ function complex() {
   }
 }
 `;
-    const matches = findAiGenDiagnostics(code);
+    const matches = await findAiGenDiagnostics(code);
     expect(matches).toHaveLength(1);
     
     const codeEnd = code.lastIndexOf('}') + 1;
     expect(matches[0].codeEndOffset).toBe(codeEnd);
   });
 
-  it('should detect inline comments when enabled', () => {
+  it('should detect inline comments when enabled', async () => {
     const code = `
 // @ai-gen
 const y = 10;
 `;
-    const matches = findAiGenDiagnostics(code, { detectInline: true });
+    const matches = await findAiGenDiagnostics(code, { detectInline: true });
     expect(matches).toHaveLength(1);
     
     const codeStart = code.indexOf('const y = 10;');
     expect(matches[0].codeStartOffset).toBe(codeStart);
   });
 
-  it('should ignore inline comments when disabled', () => {
+  it('should ignore inline comments when disabled', async () => {
     const code = `
 // @ai-gen
 const y = 10;
 `;
-    const matches = findAiGenDiagnostics(code, { detectInline: false });
+    const matches = await findAiGenDiagnostics(code, { detectInline: false });
     expect(matches).toHaveLength(0);
   });
 
-  it('should ONLY highlight next line for inline comments (not full block)', () => {
+  it('should ONLY highlight next line for inline comments (not full block)', async () => {
     const code = `
 // @ai-gen
 if (true) {
   doSomething();
 }
 `;
-    const matches = findAiGenDiagnostics(code, { detectInline: true });
+    const matches = await findAiGenDiagnostics(code, { detectInline: true });
     expect(matches).toHaveLength(1);
 
     const codeStart = code.indexOf('if (true) {');
@@ -134,29 +134,29 @@ if (true) {
     expect(matches[0].codeEndOffset).toBe(nextNewline);
   });
 
-  it('should detect custom tags', () => {
+  it('should detect custom tags', async () => {
     const code = `
 /**
  * @custom-tag
  */
 function test() {}
 `;
-    const matches = findAiGenDiagnostics(code, { tag: '@custom-tag' });
+    const matches = await findAiGenDiagnostics(code, { tag: '@custom-tag' });
     expect(matches).toHaveLength(1);
   });
 
-  it('should ignore default tag if custom tag is set', () => {
+  it('should ignore default tag if custom tag is set', async () => {
     const code = `
 /**
  * @ai-gen
  */
 function test() {}
 `;
-    const matches = findAiGenDiagnostics(code, { tag: '@custom-tag' });
+    const matches = await findAiGenDiagnostics(code, { tag: '@custom-tag' });
     expect(matches).toHaveLength(0);
   });
 
-  it('should support multiple allowed states (case insensitive)', () => {
+  it('should support multiple allowed states (case insensitive)', async () => {
     const code = `
 /** @ai-gen reviewed */
 const a = 1;
@@ -167,18 +167,17 @@ const b = 2;
 /** @ai-gen rejected */
 const c = 3;
 `;
-    const matches = findAiGenDiagnostics(code, { 
+    const matches = await findAiGenDiagnostics(code, { 
       allowedStates: ['reviewed', 'passing'] 
     });
     
     // Should match ONLY the 'rejected' one
     expect(matches).toHaveLength(1);
-    // Find roughly where 'rejected' is
     const rejectedIndex = code.indexOf('@ai-gen rejected');
     expect(matches[0].tagStartOffset).toBeGreaterThanOrEqual(rejectedIndex);
   });
 
-  it('should classify rejected states as "rejected"', () => {
+  it('should classify rejected states as "rejected"', async () => {
     const code = `
 /** @ai-gen rejected */
 const a = 1;
@@ -186,7 +185,7 @@ const a = 1;
 /** @ai-gen */
 const b = 2;
 `;
-    const matches = findAiGenDiagnostics(code,{
+    const matches = await findAiGenDiagnostics(code,{
       rejectedStates: ['rejected']
     });
 
