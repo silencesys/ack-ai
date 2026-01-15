@@ -35,6 +35,24 @@
           "default": ["ok"],
           "description": "List of keywords that mark the code as reviewed (case-insensitive)."
         },
+        "aiGenReviewer.rejectedStates": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "default": ["rejected", "reject"],
+          "description": "List of keywords that mark the code as rejected (case-insensitive)."
+        },
+        "aiGenReviewer.warningColor": {
+          "type": "string",
+          "default": "rgba(255, 215, 0, 0.1)",
+          "description": "Background color for code awaiting review (CSS color string)."
+        },
+        "aiGenReviewer.rejectedColor": {
+          "type": "string",
+          "default": "rgba(255, 0, 0, 0.1)",
+          "description": "Background color for rejected code (CSS color string)."
+        },
         "aiGenReviewer.detectInlineComments": {
           "type": "boolean",
           "default": true,

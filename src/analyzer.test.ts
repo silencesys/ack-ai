@@ -14,6 +14,7 @@ function test() {
 `;
     const matches = findAiGenDiagnostics(code);
     expect(matches).toHaveLength(1);
+    expect(matches[0].type).toBe('warning');
     
     const tagIndex = code.indexOf('@ai-gen');
     expect(matches[0].tagStartOffset).toBeGreaterThanOrEqual(tagIndex);
@@ -39,6 +40,7 @@ class A {}
 `;
     const matches = findAiGenDiagnostics(code);
     expect(matches).toHaveLength(1);
+    expect(matches[0].type).toBe('warning');
   });
 
   it('should calculate code range for single line statement', () => {
@@ -174,5 +176,27 @@ const c = 3;
     // Find roughly where 'rejected' is
     const rejectedIndex = code.indexOf('@ai-gen rejected');
     expect(matches[0].tagStartOffset).toBeGreaterThanOrEqual(rejectedIndex);
+  });
+
+  it('should classify rejected states as "rejected"', () => {
+    const code = `
+/** @ai-gen rejected */
+const a = 1;
+
+/** @ai-gen */
+const b = 2;
+`;
+    const matches = findAiGenDiagnostics(code,{
+      rejectedStates: ['rejected']
+    });
+
+    expect(matches).toHaveLength(2);
+    
+    const rejectedMatch = matches.find(m => m.type === 'rejected');
+    const warningMatch = matches.find(m => m.type === 'warning');
+    
+    expect(rejectedMatch).toBeDefined();
+    expect(warningMatch).toBeDefined();
+    expect(rejectedMatch?.tagStartOffset).toBeLessThan(warningMatch?.tagStartOffset!);
   });
 });

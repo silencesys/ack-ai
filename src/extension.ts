@@ -2,22 +2,18 @@ import * as vscode from 'vscode';
 import { findAiGenDiagnostics } from './analyzer';
 
 let diagnosticCollection: vscode.DiagnosticCollection;
-let highlightDecorationType: vscode.TextEditorDecorationType;
+let warningDecorationType: vscode.TextEditorDecorationType;
+let rejectedDecorationType: vscode.TextEditorDecorationType;
 let timeout: NodeJS.Timeout | undefined = undefined;
 
 export function activate(context: vscode.ExtensionContext) {
     console.log('AI Code Reviewer is now active');
 
     diagnosticCollection = vscode.languages.createDiagnosticCollection('ai-gen-reviewer');
-    highlightDecorationType = vscode.window.createTextEditorDecorationType({
-        backgroundColor: 'rgba(255, 215, 0, 0.1)', // Gold with low opacity
-        isWholeLine: true,
-        overviewRulerColor: 'rgba(255, 215, 0, 0.8)',
-        overviewRulerLane: vscode.OverviewRulerLane.Left
-    });
-
     context.subscriptions.push(diagnosticCollection);
-    context.subscriptions.push(highlightDecorationType);
+
+    // Initial setup of decorations (will be updated on config change)
+    updateDecorationTypes();
 
     if (vscode.window.activeTextEditor) {
         updateDiagnostics(vscode.window.activeTextEditor.document);
@@ -33,8 +29,41 @@ export function activate(context: vscode.ExtensionContext) {
             timeout = setTimeout(() => {
                 updateDiagnostics(event.document);
             }, 500); // Debounce 500ms
+        }),
+        // Listen for configuration changes to update colors
+        vscode.workspace.onDidChangeConfiguration(e => {
+            if (e.affectsConfiguration('aiGenReviewer')) {
+                updateDecorationTypes();
+                if (vscode.window.activeTextEditor) {
+                    updateDiagnostics(vscode.window.activeTextEditor.document);
+                }
+            }
         })
     );
+}
+
+function updateDecorationTypes() {
+    const config = vscode.workspace.getConfiguration('aiGenReviewer');
+    const warningColor = config.get<string>('warningColor') || 'rgba(255, 215, 0, 0.1)';
+    const rejectedColor = config.get<string>('rejectedColor') || 'rgba(255, 0, 0, 0.1)';
+
+    // Dispose old decorations if they exist to avoid leaks/stale colors
+    if (warningDecorationType) warningDecorationType.dispose();
+    if (rejectedDecorationType) rejectedDecorationType.dispose();
+
+    warningDecorationType = vscode.window.createTextEditorDecorationType({
+        backgroundColor: warningColor,
+        isWholeLine: true,
+        overviewRulerColor: 'rgba(255, 215, 0, 0.8)',
+        overviewRulerLane: vscode.OverviewRulerLane.Left
+    });
+
+    rejectedDecorationType = vscode.window.createTextEditorDecorationType({
+        backgroundColor: rejectedColor,
+        isWholeLine: true,
+        overviewRulerColor: 'rgba(255, 0, 0, 0.8)',
+        overviewRulerLane: vscode.OverviewRulerLane.Left
+    });
 }
 
 function updateDiagnostics(document: vscode.TextDocument) {
@@ -56,11 +85,13 @@ function updateDiagnostics(document: vscode.TextDocument) {
     const detectInline = config.get<boolean>('detectInlineComments') ?? true;
     const tag = config.get<string>('tag') || '@ai-gen';
     const allowedStates = config.get<string[]>('allowedStates') || ['ok'];
+    const rejectedStates = config.get<string[]>('rejectedStates') || ['rejected', 'reject'];
 
-    const matches = findAiGenDiagnostics(text, { detectInline, tag, allowedStates });
+    const matches = findAiGenDiagnostics(text, { detectInline, tag, allowedStates, rejectedStates });
     
     const diagnostics: vscode.Diagnostic[] = [];
-    const highlightRanges: vscode.Range[] = [];
+    const warningRanges: vscode.Range[] = [];
+    const rejectedRanges: vscode.Range[] = [];
 
     const allowedStatesMsg = allowedStates.length > 0 ? allowedStates.join("' or '") : "ok";
 
@@ -71,11 +102,15 @@ function updateDiagnostics(document: vscode.TextDocument) {
             document.positionAt(match.tagEndOffset)
         );
 
-        const tagDiagnostic = new vscode.Diagnostic(
-            tagRange,
-            `AI-generated code requires verification. Append '${allowedStatesMsg}' to the tag to dismiss.`,
-            vscode.DiagnosticSeverity.Warning
-        );
+        const msg = match.type === 'rejected' 
+            ? "Code explicitly marked as rejected." 
+            : `AI-generated code requires verification. Append '${allowedStatesMsg}' to the tag to dismiss.`;
+            
+        const severity = match.type === 'rejected' 
+            ? vscode.DiagnosticSeverity.Error 
+            : vscode.DiagnosticSeverity.Warning;
+
+        const tagDiagnostic = new vscode.Diagnostic(tagRange, msg, severity);
         tagDiagnostic.source = 'ai-gen-reviewer';
         diagnostics.push(tagDiagnostic);
 
@@ -86,7 +121,12 @@ function updateDiagnostics(document: vscode.TextDocument) {
                 document.positionAt(match.codeStartOffset),
                 document.positionAt(match.codeEndOffset)
             );
-            highlightRanges.push(codeRange);
+            
+            if (match.type === 'rejected') {
+                rejectedRanges.push(codeRange);
+            } else {
+                warningRanges.push(codeRange);
+            }
         }
     }
 
@@ -95,9 +135,13 @@ function updateDiagnostics(document: vscode.TextDocument) {
     // Apply decorations to all visible editors displaying this document
     vscode.window.visibleTextEditors.forEach(editor => {
         if (editor.document.uri.toString() === document.uri.toString()) {
-            editor.setDecorations(highlightDecorationType, highlightRanges);
+            editor.setDecorations(warningDecorationType, warningRanges);
+            editor.setDecorations(rejectedDecorationType, rejectedRanges);
         }
     });
 }
 
-export function deactivate() {}
+export function deactivate() {
+    if (warningDecorationType) warningDecorationType.dispose();
+    if (rejectedDecorationType) rejectedDecorationType.dispose();
+}
