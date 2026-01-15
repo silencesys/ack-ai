@@ -7,6 +7,7 @@ let rejectedDecorationType: vscode.TextEditorDecorationType;
 
 // Map to manage cancellation tokens per document (URI string)
 const tokenSources = new Map<string, vscode.CancellationTokenSource>();
+const debounceTimers = new Map<string, NodeJS.Timeout>();
 
 // Cache to store calculated ranges for instant tab switching
 interface DecorationCacheEntry {
@@ -17,9 +18,9 @@ interface DecorationCacheEntry {
 const decorationCache = new Map<string, DecorationCacheEntry>();
 
 export function activate(context: vscode.ExtensionContext) {
-    console.log('AI Code Reviewer is now active');
+    console.log('Ack-AI is now active');
 
-    diagnosticCollection = vscode.languages.createDiagnosticCollection('ai-gen-reviewer');
+    diagnosticCollection = vscode.languages.createDiagnosticCollection('ack-ai');
     context.subscriptions.push(diagnosticCollection);
 
     updateDecorationTypes();
@@ -30,8 +31,21 @@ export function activate(context: vscode.ExtensionContext) {
 
     context.subscriptions.push(
         vscode.workspace.onDidOpenTextDocument(doc => triggerUpdate(doc)),
-        vscode.workspace.onDidChangeTextDocument(event => triggerUpdate(event.document)),
-        
+
+        // Debounce typing events to prevent thrashing
+        vscode.workspace.onDidChangeTextDocument(event => {
+            const key = event.document.uri.toString();
+            const existingTimer = debounceTimers.get(key);
+            if (existingTimer) {
+                clearTimeout(existingTimer);
+            }
+            const timer = setTimeout(() => {
+                triggerUpdate(event.document);
+                debounceTimers.delete(key);
+            }, 200); // 200ms debounce
+            debounceTimers.set(key, timer);
+        }),
+
         // Handle tab switching / focus change - Instant update from cache
         vscode.window.onDidChangeActiveTextEditor(editor => {
             if (editor) {
@@ -45,7 +59,7 @@ export function activate(context: vscode.ExtensionContext) {
         }),
 
         vscode.workspace.onDidChangeConfiguration(e => {
-            if (e.affectsConfiguration('aiGenReviewer')) {
+            if (e.affectsConfiguration('ackAi')) {
                 updateDecorationTypes();
                 // Clear cache to force re-render with new colors/logic if needed (though ranges might be same, safer to clear)
                 decorationCache.clear();
@@ -59,24 +73,32 @@ export function activate(context: vscode.ExtensionContext) {
         // Cleanup tokens and cache when documents are closed
         vscode.workspace.onDidCloseTextDocument(doc => {
             const key = doc.uri.toString();
+
             const source = tokenSources.get(key);
             if (source) {
                 source.cancel();
                 source.dispose();
                 tokenSources.delete(key);
             }
+
+            const timer = debounceTimers.get(key);
+            if (timer) {
+                clearTimeout(timer);
+                debounceTimers.delete(key);
+            }
+
             decorationCache.delete(key);
         })
     );
 }
 
 function updateDecorationTypes() {
-    const config = vscode.workspace.getConfiguration('aiGenReviewer');
+    const config = vscode.workspace.getConfiguration('ackAi');
     const warningColor = config.get<string>('warningColor') || 'rgba(255, 215, 0, 0.1)';
     const rejectedColor = config.get<string>('rejectedColor') || 'rgba(255, 0, 0, 0.1)';
 
-    if (warningDecorationType) warningDecorationType.dispose();
-    if (rejectedDecorationType) rejectedDecorationType.dispose();
+    if (warningDecorationType) {warningDecorationType.dispose();}
+    if (rejectedDecorationType) {rejectedDecorationType.dispose();}
 
     warningDecorationType = vscode.window.createTextEditorDecorationType({
         backgroundColor: warningColor,
@@ -128,10 +150,10 @@ function triggerUpdate(document: vscode.TextDocument, editor?: vscode.TextEditor
 }
 
 async function updateDiagnostics(document: vscode.TextDocument, token: vscode.CancellationToken) {
-    if (token.isCancellationRequested) return;
+    if (token.isCancellationRequested) {return;}
 
     const text = document.getText();
-    const config = vscode.workspace.getConfiguration('aiGenReviewer');
+    const config = vscode.workspace.getConfiguration('ackAi');
     const detectInline = config.get<boolean>('detectInlineComments') ?? true;
     const tag = config.get<string>('tag') || '@ai-gen';
     const allowedStates = config.get<string[]>('allowedStates') || ['ok'];
@@ -139,8 +161,8 @@ async function updateDiagnostics(document: vscode.TextDocument, token: vscode.Ca
 
     // Pass token to analyzer for deep cancellation
     const matches = await findAiGenDiagnostics(text, { detectInline, tag, allowedStates, rejectedStates }, token);
-    
-    if (token.isCancellationRequested) return;
+
+    if (token.isCancellationRequested) {return;}
 
     const diagnostics: vscode.Diagnostic[] = [];
     const warningRanges: vscode.Range[] = [];
@@ -153,16 +175,16 @@ async function updateDiagnostics(document: vscode.TextDocument, token: vscode.Ca
             document.positionAt(match.tagEndOffset)
         );
 
-        const msg = match.type === 'rejected' 
-            ? "Code explicitly marked as rejected." 
+        const msg = match.type === 'rejected'
+            ? "Code explicitly marked as rejected."
             : `AI-generated code requires verification. Append '${allowedStatesMsg}' to the tag to dismiss.`;
-            
-        const severity = match.type === 'rejected' 
-            ? vscode.DiagnosticSeverity.Error 
+
+        const severity = match.type === 'rejected'
+            ? vscode.DiagnosticSeverity.Error
             : vscode.DiagnosticSeverity.Warning;
 
         const tagDiagnostic = new vscode.Diagnostic(tagRange, msg, severity);
-        tagDiagnostic.source = 'ai-gen-reviewer';
+        tagDiagnostic.source = 'ack-ai';
         diagnostics.push(tagDiagnostic);
 
         if (match.codeStartOffset < match.codeEndOffset) {
@@ -170,7 +192,7 @@ async function updateDiagnostics(document: vscode.TextDocument, token: vscode.Ca
                 document.positionAt(match.codeStartOffset),
                 document.positionAt(match.codeEndOffset)
             );
-            
+
             if (match.type === 'rejected') {
                 rejectedRanges.push(codeRange);
             } else {
@@ -209,6 +231,6 @@ function applyDecorations(document: vscode.TextDocument, warningRanges: vscode.R
 }
 
 export function deactivate() {
-    if (warningDecorationType) warningDecorationType.dispose();
-    if (rejectedDecorationType) rejectedDecorationType.dispose();
+    if (warningDecorationType) {warningDecorationType.dispose();}
+    if (rejectedDecorationType) {rejectedDecorationType.dispose();}
 }

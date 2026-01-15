@@ -26,20 +26,21 @@ const YIELD_INTERVAL_MS = 15; // Yield every 15ms to keep UI responsive
  * Analyzes text to find specific tags (default @ai-gen) that are not marked as 'ok'.
  * Returns the character offsets needed to create VS Code diagnostics.
  * Uses optimized Regex scanning (O(N)) AND time-slicing to prevent main-thread blocking.
+ * @ai-gen ok
  */
 export async function findAiGenDiagnostics(text: string, options: Partial<AnalyzerOptions> = {}, token?: { isCancellationRequested: boolean }): Promise<DiagnosticMatch[]> {
-  const { 
-    detectInline = true, 
-    tag = '@ai-gen', 
+  const {
+    detectInline = true,
+    tag = '@ai-gen',
     allowedStates = ['ok'],
     rejectedStates = ['rejected', 'reject']
   } = options;
-  
+
   const matches: DiagnosticMatch[] = [];
-  
+
   const allowedStatesSet = new Set(allowedStates.map(s => s.toLowerCase()));
   const rejectedStatesSet = new Set(rejectedStates.map(s => s.toLowerCase()));
-  
+
   const mainPattern = detectInline ? ALL_COMMENTS_PATTERN : DOC_BLOCK_PATTERN;
   mainPattern.lastIndex = 0;
 
@@ -48,7 +49,7 @@ export async function findAiGenDiagnostics(text: string, options: Partial<Analyz
 
   let startTime = Date.now();
   let match;
-  
+
   while ((match = mainPattern.exec(text)) !== null) {
     // Cancellation check
     if (token?.isCancellationRequested) {
@@ -57,14 +58,14 @@ export async function findAiGenDiagnostics(text: string, options: Partial<Analyz
 
     // Time-slicing check
     if (Date.now() - startTime > YIELD_INTERVAL_MS) {
-      await new Promise(resolve => setTimeout(resolve, 0)); // Yield to event loop
+      await new Promise(resolve => setImmediate(resolve)); // Yield to event loop
       startTime = Date.now(); // Reset timer
     }
 
     const fullComment = match[0];
     const commentStartOffset = match.index;
     const commentEndOffset = commentStartOffset + fullComment.length;
-    
+
     // Check for tag inside the comment
     const tagMatch = tagRegex.exec(fullComment);
 
@@ -83,7 +84,7 @@ export async function findAiGenDiagnostics(text: string, options: Partial<Analyz
 
       NON_WHITESPACE_PATTERN.lastIndex = commentEndOffset;
       const codeMatch = NON_WHITESPACE_PATTERN.exec(text);
-      
+
       if (codeMatch) {
         const codeStartOffset = codeMatch.index;
         let codeEndOffset: number;
@@ -94,7 +95,7 @@ export async function findAiGenDiagnostics(text: string, options: Partial<Analyz
         } else {
           codeEndOffset = findBlockEndOffset(text, codeStartOffset);
         }
-        
+
         matches.push({
           tagStartOffset,
           tagEndOffset,
@@ -109,18 +110,21 @@ export async function findAiGenDiagnostics(text: string, options: Partial<Analyz
   return matches;
 }
 
+/**
+ * @ai-gen ok
+ */
 function findBlockEndOffset(text: string, startOffset: number): number {
   const len = text.length;
   let j = startOffset;
-  
+
   // Fast heuristic scan
   while (j < len) {
       const char = text.charCodeAt(j);
       if (char === 123) { // '{'
-          break; 
+          break;
       }
       if (char === 59) { // ';'
-          return j + 1; 
+          return j + 1;
       }
       if (char === 10) { // '\n'
           break;
@@ -129,7 +133,7 @@ function findBlockEndOffset(text: string, startOffset: number): number {
   }
 
   BRACE_PATTERN.lastIndex = startOffset;
-  
+
   let braceDepth = 0;
   let foundFirstBrace = false;
   let match;
