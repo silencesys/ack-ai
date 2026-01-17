@@ -1,6 +1,12 @@
-# Ack-AI
+<p align="center">
+  <img src="images/icon.png" alt="Ack-AI Logo" width="128" height="128">
+</p>
 
-**Acknowledge your AI-generated code before it hits production.**
+<h1 align="center">Ack-AI</h1>
+
+<p align="center">
+  <strong>Acknowledge your AI-generated code before it hits production.</strong>
+</p>
 
 Ack-AI is a VS Code extension that enforces a "Human-in-the-Loop" workflow. It scans your source code for AI generation tags and highlights them with a warning until a human developer explicitly acknowledges ("acks") them.
 
@@ -20,33 +26,19 @@ It turns the `@ai-gen` tag into a **mandatory review checkpoint**.
 
 ## How it Works
 
-### 1. The Warning State ⚠️
+### 1. The Warning State
 When you paste or generate code with the tag `@ai-gen`, Ack-AI flags it immediately.
 
-```php
-/**
- * @ai-gen
- * This function was written by AI and hasn't been read by a human yet.
- */
-function riskyBusiness() {
-    // ...
-}
-```
-*Result: The docblock and the function are highlighted yellow.*
+<p align="center">
+  <img src="images/ai-gen-generated.png" alt="Warning state - code highlighted yellow" width="600">
+</p>
 
-### 2. The Acknowledged State ✅
+### 2. The Acknowledged State
 To clear the warning, you must review the code and explicitly "Ack" it by adding `ok` to the tag.
 
-```php
-/**
- * @ai-gen ok
- * Reviewed by Dave on 2024-05-12. Logic verified.
- */
-function riskyBusiness() {
-    // ...
-}
-```
-*Result: The warning disappears. The code is now considered safe.*
+<p align="center">
+  <img src="images/ai-gen-reviewed.png" alt="Reviewed state - no highlight" width="600">
+</p>
 
 ## Supported Languages
 

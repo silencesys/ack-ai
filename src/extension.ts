@@ -155,12 +155,13 @@ async function updateDiagnostics(document: vscode.TextDocument, token: vscode.Ca
     const text = document.getText();
     const config = vscode.workspace.getConfiguration('ackAi');
     const detectInline = config.get<boolean>('detectInlineComments') ?? true;
+    const detectFileLevel = config.get<boolean>('detectFileLevelComments') ?? true;
     const tag = config.get<string>('tag') || '@ai-gen';
     const allowedStates = config.get<string[]>('allowedStates') || ['ok'];
     const rejectedStates = config.get<string[]>('rejectedStates') || ['rejected', 'reject'];
 
     // Pass token to analyzer for deep cancellation
-    const matches = await findAiGenDiagnostics(text, { detectInline, tag, allowedStates, rejectedStates }, token);
+    const matches = await findAiGenDiagnostics(text, { detectInline, detectFileLevel, tag, allowedStates, rejectedStates }, token);
 
     if (token.isCancellationRequested) {return;}
 
@@ -231,6 +232,26 @@ function applyDecorations(document: vscode.TextDocument, warningRanges: vscode.R
 }
 
 export function deactivate() {
+    // Cancel all pending analysis tasks
+    tokenSources.forEach(source => {
+        source.cancel();
+        source.dispose();
+    });
+    tokenSources.clear();
+
+    // Clear all pending debounce timers
+    debounceTimers.forEach(timer => clearTimeout(timer));
+    debounceTimers.clear();
+
+    // Clear decoration cache
+    decorationCache.clear();
+
+    // Clear diagnostics
+    if (diagnosticCollection) {
+        diagnosticCollection.clear();
+    }
+
+    // Dispose decoration types
     if (warningDecorationType) {warningDecorationType.dispose();}
     if (rejectedDecorationType) {rejectedDecorationType.dispose();}
 }

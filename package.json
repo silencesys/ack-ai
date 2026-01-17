@@ -4,6 +4,7 @@
   "description": "Flags @ai-gen tags in DocBlocks that haven't been marked as 'ok'.",
   "version": "0.0.1",
   "publisher": "silencesys",
+  "icon": "images/icon.png",
   "repository": {
     "type": "git",
     "url": "https://github.com/silencesys/ack-ai"
@@ -62,6 +63,11 @@
           "type": "boolean",
           "default": true,
           "description": "Whether to detect @ai-gen tags in inline comments (//)."
+        },
+        "ackAi.detectFileLevelComments": {
+          "type": "boolean",
+          "default": true,
+          "description": "Whether to highlight the entire file when @ai-gen is at the top of the file."
         }
       }
     }
@@ -72,7 +78,8 @@
     "watch": "tsc -watch -p ./",
     "pretest": "npm run compile && npm run lint",
     "lint": "eslint src --ext ts",
-    "test": "vitest"
+    "test": "vitest",
+    "package": "vsce package"
   },
   "devDependencies": {
     "@types/vscode": "^1.85.0",
