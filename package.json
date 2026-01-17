@@ -2,7 +2,7 @@
   "name": "ack-ai",
   "displayName": "Ack-AI",
   "description": "Flags @ai-gen tags in DocBlocks that haven't been marked as 'ok'.",
-  "version": "0.0.1",
+  "version": "0.0.2",
   "publisher": "silencesys",
   "icon": "images/icon.png",
   "repository": {
@@ -38,7 +38,9 @@
           "items": {
             "type": "string"
           },
-          "default": ["ok"],
+          "default": [
+            "ok"
+          ],
           "description": "List of keywords that mark the code as reviewed (case-insensitive)."
         },
         "ackAi.rejectedStates": {
@@ -46,7 +48,10 @@
           "items": {
             "type": "string"
           },
-          "default": ["rejected", "reject"],
+          "default": [
+            "rejected",
+            "reject"
+          ],
           "description": "List of keywords that mark the code as rejected (case-insensitive)."
         },
         "ackAi.warningColor": {
