@@ -39,8 +39,13 @@ const HASH_FILE_LEVEL_COMMENT_PATTERN = /^(\s*)(#.*)/;
 
 const NON_WHITESPACE_PATTERN = /\S/g;
 
+// Pre-compiled regex patterns for tag content cleaning (avoid creating on each match)
+const JS_BLOCK_END_PATTERN = /\s*\*\/$/;
+const PY_DOCSTRING_END_PATTERN = /\s*(?:"""|''')$/;
+
 // Time-slicing configuration
 const YIELD_INTERVAL_MS = 15; // Yield every 15ms to keep UI responsive
+const YIELD_CHECK_INTERVAL = 10; // Only check time every N iterations
 
 /**
  * Analyzes text to find specific tags (default ai-gen) that are not marked as 'ok'.
@@ -103,21 +108,29 @@ export async function findAiGenDiagnostics(text: string, options: Partial<Analyz
 
   let startTime = Date.now();
   let match;
+  let iterationCount = 0;
 
   while ((match = mainPattern.exec(text)) !== null) {
     // Skip the file-level comment if we already processed it
     if (fileLevelCommentEndOffset !== -1 && match.index < fileLevelCommentEndOffset) {
       continue;
     }
-    // Cancellation check
-    if (token?.isCancellationRequested) {
-      return [];
-    }
 
-    // Time-slicing check
-    if (Date.now() - startTime > YIELD_INTERVAL_MS) {
-      await new Promise(resolve => setImmediate(resolve)); // Yield to event loop
-      startTime = Date.now(); // Reset timer
+    // Only check cancellation and time every N iterations (reduces overhead)
+    if (++iterationCount >= YIELD_CHECK_INTERVAL) {
+      iterationCount = 0;
+
+      // Cancellation check
+      if (token?.isCancellationRequested) {
+        return [];
+      }
+
+      // Time-slicing check
+      const now = Date.now();
+      if (now - startTime > YIELD_INTERVAL_MS) {
+        await new Promise(resolve => setImmediate(resolve)); // Yield to event loop
+        startTime = now; // Reset timer
+      }
     }
 
     const fullComment = match[0];
@@ -131,8 +144,8 @@ export async function findAiGenDiagnostics(text: string, options: Partial<Analyz
       const rawContent = tagMatch[1];
       // Clean trailing comment syntax: */ for JS, """ or ''' for Python
       const tagContent = rawContent
-        .replace(/\s*\*\/$/, '')       // JS block comment end
-        .replace(/\s*(?:"""|''')$/, '') // Python docstring end
+        .replace(JS_BLOCK_END_PATTERN, '')   // JS block comment end
+        .replace(PY_DOCSTRING_END_PATTERN, '') // Python docstring end
         .trim()
         .toLowerCase();
 
@@ -222,8 +235,8 @@ function checkFileLevelComment(
   const rawContent = tagMatch[1];
   // Clean trailing comment syntax: */ for JS, """ or ''' for Python
   const tagContent = rawContent
-    .replace(/\s*\*\/$/, '')       // JS block comment end
-    .replace(/\s*(?:"""|''')$/, '') // Python docstring end
+    .replace(JS_BLOCK_END_PATTERN, '')   // JS block comment end
+    .replace(PY_DOCSTRING_END_PATTERN, '') // Python docstring end
     .trim()
     .toLowerCase();
 
@@ -296,7 +309,7 @@ function findBlockEndOffset(text: string, startOffset: number): number {
 
     // Skip strings to avoid false matches on () or {} inside strings
     if (char === 34 || char === 39 || char === 96) { // " ' `
-      i = char === 96 ? skipTemplateLiteral(text, i, len) : skipString(text, i, char);
+      i = char === 96 ? skipTemplateLiteral(text, i, len) : skipString(text, i, char, len);
       lastSignificant = char;
       continue;
     }
@@ -421,14 +434,14 @@ function findBlockEndOffsetCareful(text: string, startOffset: number, len: numbe
 
     // Skip double-quoted strings
     if (char === 34) { // '"'
-      i = skipString(text, i, 34);
+      i = skipString(text, i, 34, len);
       lastSignificant = 34;
       continue;
     }
 
     // Skip single-quoted strings
     if (char === 39) { // "'"
-      i = skipString(text, i, 39);
+      i = skipString(text, i, 39, len);
       lastSignificant = 39;
       continue;
     }
@@ -571,11 +584,12 @@ function skipTemplateLiteral(text: string, start: number, len: number): number {
 
 /**
  * Skips a string literal starting at position i, returns position after closing quote.
+ * @param len - Pass text.length to avoid repeated property access in hot loops
  */
-function skipString(text: string, start: number, quoteChar: number): number {
+function skipString(text: string, start: number, quoteChar: number, len?: number): number {
   let i = start + 1;
-  const len = text.length;
-  while (i < len) {
+  const textLen = len ?? text.length;
+  while (i < textLen) {
     const c = text.charCodeAt(i);
     if (c === 92) { // '\' escape - skip next char
       i += 2;
@@ -586,7 +600,7 @@ function skipString(text: string, start: number, quoteChar: number): number {
     }
     i++;
   }
-  return len;
+  return textLen;
 }
 
 function escapeRegExp(string: string): string {
@@ -596,23 +610,32 @@ function escapeRegExp(string: string): string {
 /**
  * Checks if the text range contains characters that require careful parsing.
  * Uses charCodeAt instead of slice+regex to avoid memory allocation.
+ * Limits scan to first 2000 chars for performance - if complex content exists,
+ * it's usually near the start of the block.
  */
 function hasComplexContentInRange(text: string, start: number, end: number): boolean {
-  for (let i = start; i < end; i++) {
+  // Limit scan range for very large blocks - assume complex if block is huge
+  const MAX_SCAN = 2000;
+  const scanEnd = Math.min(end, start + MAX_SCAN);
+
+  for (let i = start; i < scanEnd; i++) {
     const c = text.charCodeAt(i);
-    // Check for: " (34), ' (39), ` (96), / (47)
+    // Check for: " (34), ' (39), ` (96)
     if (c === 34 || c === 39 || c === 96) {
       return true;
     }
     // Check for // or /* (/ followed by / or *)
-    if (c === 47 && i + 1 < end) {
+    if (c === 47) {
       const next = text.charCodeAt(i + 1);
       if (next === 47 || next === 42) {
         return true;
       }
     }
   }
-  return false;
+
+  // If we hit the scan limit without finding complex content, assume complex
+  // to be safe (better to use slow path than miss strings/comments)
+  return end > start + MAX_SCAN;
 }
 
 /**
@@ -668,7 +691,7 @@ function findPythonBlockEndOffset(text: string, startOffset: number): number {
       continue;
     }
 
-    // Check if it's a comment line - include it if indented, skip otherwise
+    // Check if it's a comment line - include it only if indented more than def
     if (text.charCodeAt(linePos) === 35) { // '#'
       if (lineIndent > defIndent) {
         // Indented comment is part of the block
@@ -676,9 +699,11 @@ function findPythonBlockEndOffset(text: string, startOffset: number): number {
           linePos++;
         }
         lastContentEnd = linePos;
+        pos = linePos + 1;
+        continue;
       }
-      pos = linePos + 1;
-      continue;
+      // Non-indented comment means we've exited the block
+      return lastContentEnd;
     }
 
     // If indentation is <= def line, we've exited the block

@@ -19,10 +19,12 @@ It turns the `@ai-gen` tag into a **mandatory review checkpoint**.
 
 ## Features
 
-*   **Real-time Monitoring:** Instantly detects `@ai-gen` docblocks in your code.
+*   **Real-time Monitoring:** Instantly detects `@ai-gen` tags in your code.
 *   **Visual Warning:** Highlights unverified AI code with a **Warning** squiggly line.
-*   **The "Ack" Workflow:** The warning persists until you append `ok` (or `reviewed`, `checked`) to the tag (you can set your own).
-*   **Context Aware:** Highlights not just the comment, but the code block immediately following it, ensuring you see exactly what needs review.
+*   **The "Ack" Workflow:** The warning persists until you append `ok` to the tag.
+*   **Context Aware:** Highlights not just the comment, but the entire code block (function/class body) following it.
+*   **File-level Tags:** Add `// @ai-gen` at the top of a file to mark the entire file as AI-generated.
+*   **Multi-language Support:** Works with 25+ programming languages using language-appropriate comment syntax.
 
 ## How it Works
 
@@ -42,10 +44,38 @@ To clear the warning, you must review the code and explicitly "Ack" it by adding
 
 ## Supported Languages
 
-Ack-AI currently provides diagnostics for:
+Ack-AI supports a wide range of programming languages:
+
+### C-style comments (`/** */` and `//`)
+*   **JavaScript** (`.js`, `.jsx`, `.mjs`, `.cjs`)
+*   **TypeScript** (`.ts`, `.tsx`, `.mts`, `.cts`)
 *   **PHP** (`.php`)
-*   **JavaScript** (`.js`, `.jsx`)
-*   **TypeScript** (`.ts`, `.tsx`)
+*   **Java** (`.java`)
+*   **C/C++** (`.c`, `.cpp`, `.h`, `.hpp`)
+*   **C#** (`.cs`)
+*   **Go** (`.go`)
+*   **Rust** (`.rs`)
+*   **Swift** (`.swift`)
+*   **Kotlin** (`.kt`, `.kts`)
+*   **Scala** (`.scala`)
+*   **Dart** (`.dart`)
+*   **Groovy** (`.groovy`)
+*   **Objective-C** (`.m`, `.mm`)
+
+### Python docstrings (`"""` and `'''`) and hash comments (`#`)
+*   **Python** (`.py`)
+
+### Hash comments (`#`)
+*   **Ruby** (`.rb`)
+*   **Shell/Bash** (`.sh`, `.bash`, `.zsh`)
+*   **Perl** (`.pl`, `.pm`)
+*   **R** (`.r`, `.R`)
+*   **YAML** (`.yml`, `.yaml`)
+*   **Dockerfile**
+*   **Makefile**
+*   **CoffeeScript** (`.coffee`)
+*   **PowerShell** (`.ps1`)
+*   **Elixir** (`.ex`, `.exs`)
 
 ## Configuration
 
@@ -53,6 +83,7 @@ No configuration needed! Just install and start reviewing.
 
 *   **Trigger:** `@ai-gen`
 *   **Safe Keywords:** `ok` (Case insensitive)
+*   **Rejected Keywords:** `rejected`, `reject` (marks code as explicitly rejected)
 
 ## Installation
 
