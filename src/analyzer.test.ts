@@ -293,23 +293,6 @@ const b = 2;
 
   // File-level comment tests
   describe('File-level comments', () => {
-    it('should detect @ai-gen at the start of file (docblock) and highlight entire file', async () => {
-      const code = `/** @ai-gen */
-function foo() {
-  return 1;
-}
-
-function bar() {
-  return 2;
-}
-`;
-      const matches = await findAiGenDiagnostics(code);
-      expect(matches).toHaveLength(1);
-      expect(matches[0].isFileLevel).toBe(true);
-      expect(matches[0].type).toBe('warning');
-      expect(matches[0].codeEndOffset).toBe(code.length);
-    });
-
     it('should detect @ai-gen at the start of file (inline comment) and highlight entire file', async () => {
       const code = `// @ai-gen
 function foo() {
@@ -323,32 +306,52 @@ function bar() {
       const matches = await findAiGenDiagnostics(code, { detectInline: true });
       expect(matches).toHaveLength(1);
       expect(matches[0].isFileLevel).toBe(true);
+      expect(matches[0].type).toBe('warning');
       expect(matches[0].codeEndOffset).toBe(code.length);
     });
 
-    it('should allow whitespace before file-level comment', async () => {
-      const code = `
-/** @ai-gen */
-function foo() {}
+    it('should NOT treat docblock at start of file as file-level (should highlight only following function)', async () => {
+      const code = `/** @ai-gen */
+function foo() {
+  return 1;
+}
+
+function bar() {
+  return 2;
+}
 `;
       const matches = await findAiGenDiagnostics(code);
+      expect(matches).toHaveLength(1);
+      // Docblocks at start of file should NOT be file-level - they should only highlight the following function
+      expect(matches[0].isFileLevel).toBeUndefined();
+      expect(matches[0].type).toBe('warning');
+      // Code end should be at the end of first function, not the entire file
+      expect(matches[0].codeEndOffset).toBeLessThan(code.length);
+    });
+
+    it('should allow whitespace before file-level inline comment', async () => {
+      const code = `
+// @ai-gen
+function foo() {}
+`;
+      const matches = await findAiGenDiagnostics(code, { detectInline: true });
       expect(matches).toHaveLength(1);
       expect(matches[0].isFileLevel).toBe(true);
     });
 
     it('should ignore file-level comment if state is "ok"', async () => {
-      const code = `/** @ai-gen ok */
+      const code = `// @ai-gen ok
 function foo() {}
 `;
-      const matches = await findAiGenDiagnostics(code);
+      const matches = await findAiGenDiagnostics(code, { detectInline: true });
       expect(matches).toHaveLength(0);
     });
 
     it('should mark file-level comment as rejected when state is "rejected"', async () => {
-      const code = `/** @ai-gen rejected */
+      const code = `// @ai-gen rejected
 function foo() {}
 `;
-      const matches = await findAiGenDiagnostics(code);
+      const matches = await findAiGenDiagnostics(code, { detectInline: true });
       expect(matches).toHaveLength(1);
       expect(matches[0].isFileLevel).toBe(true);
       expect(matches[0].type).toBe('rejected');
@@ -362,14 +365,14 @@ function foo() {}
       expect(matches).toHaveLength(0);
     });
 
-    it('should detect both file-level and regular comments in the same file', async () => {
-      const code = `/** @ai-gen */
+    it('should detect both file-level (inline) and regular (docblock) comments in the same file', async () => {
+      const code = `// @ai-gen
 function foo() {}
 
 /** @ai-gen */
 function bar() {}
 `;
-      const matches = await findAiGenDiagnostics(code);
+      const matches = await findAiGenDiagnostics(code, { detectInline: true });
       expect(matches).toHaveLength(2);
 
       const fileLevelMatch = matches.find(m => m.isFileLevel);
