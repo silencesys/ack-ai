@@ -3,7 +3,7 @@ export interface DiagnosticMatch {
   tagEndOffset: number;
   codeStartOffset: number;
   codeEndOffset: number;
-  type: 'warning' | 'rejected';
+  type: 'warning' | 'rejected' | 'allowed';
   isFileLevel?: boolean; // When true, the entire file should be highlighted
 }
 
@@ -16,6 +16,7 @@ export interface AnalyzerOptions {
   allowedStates: string[];
   rejectedStates: string[];
   language: LanguageType;
+  includeAllowed: boolean; // When true, also return matches for allowed (reviewed) code
 }
 
 // Reusable regex patterns for performance (stateless)
@@ -60,7 +61,8 @@ export async function findAiGenDiagnostics(text: string, options: Partial<Analyz
     tag = '@ai-gen',
     allowedStates = ['ok'],
     rejectedStates = ['rejected', 'reject'],
-    language = 'javascript'
+    language = 'javascript',
+    includeAllowed = false
   } = options;
 
   // Select patterns based on language
@@ -149,11 +151,16 @@ export async function findAiGenDiagnostics(text: string, options: Partial<Analyz
         .trim()
         .toLowerCase();
 
-      if (allowedStatesSet.has(tagContent)) {
+      const isAllowed = allowedStatesSet.has(tagContent);
+
+      // Skip allowed states unless includeAllowed is true
+      if (isAllowed && !includeAllowed) {
         continue;
       }
 
-      const type: 'warning' | 'rejected' = rejectedStatesSet.has(tagContent) ? 'rejected' : 'warning';
+      const type: 'warning' | 'rejected' | 'allowed' = isAllowed
+        ? 'allowed'
+        : rejectedStatesSet.has(tagContent) ? 'rejected' : 'warning';
 
       const tagStartOffset = commentStartOffset + tagMatch.index;
       const tagEndOffset = tagStartOffset + tagMatch[0].length;

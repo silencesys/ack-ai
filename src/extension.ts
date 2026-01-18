@@ -1,9 +1,17 @@
 import * as vscode from 'vscode';
+import * as path from 'path';
 import { findAiGenDiagnostics, LanguageType } from './analyzer';
 
 let diagnosticCollection: vscode.DiagnosticCollection;
 let warningDecorationType: vscode.TextEditorDecorationType;
 let rejectedDecorationType: vscode.TextEditorDecorationType;
+let allowedGutterDecorationType: vscode.TextEditorDecorationType;
+
+// Helper to get the current showReviewedIndicators setting
+function getShowReviewedIndicators(): boolean {
+    const config = vscode.workspace.getConfiguration('ackAi');
+    return config.get<boolean>('showReviewedIndicators') ?? false;
+}
 
 // Map to manage cancellation tokens per document (URI string)
 const tokenSources = new Map<string, vscode.CancellationTokenSource>();
@@ -14,6 +22,7 @@ interface DecorationCacheEntry {
     version: number;
     warningRanges: vscode.Range[];
     rejectedRanges: vscode.Range[];
+    allowedRanges: vscode.Range[];
 }
 const decorationCache = new Map<string, DecorationCacheEntry>();
 
@@ -28,6 +37,19 @@ export function activate(context: vscode.ExtensionContext) {
     if (vscode.window.activeTextEditor) {
         triggerUpdate(vscode.window.activeTextEditor.document);
     }
+
+    // Register toggle command - toggles the setting directly
+    context.subscriptions.push(
+        vscode.commands.registerCommand('ackAi.toggleAllowedIndicators', async () => {
+            const config = vscode.workspace.getConfiguration('ackAi');
+            const current = config.get<boolean>('showReviewedIndicators') ?? false;
+            await config.update('showReviewedIndicators', !current, vscode.ConfigurationTarget.Global);
+
+            // Note: The onDidChangeConfiguration handler will take care of refreshing
+            const status = !current ? 'enabled' : 'disabled';
+            vscode.window.showInformationMessage(`Ack-AI: Reviewed code indicators ${status}`);
+        })
+    );
 
     context.subscriptions.push(
         vscode.workspace.onDidOpenTextDocument(doc => triggerUpdate(doc)),
@@ -96,9 +118,11 @@ function updateDecorationTypes() {
     const config = vscode.workspace.getConfiguration('ackAi');
     const warningColor = config.get<string>('warningColor') || 'rgba(255, 215, 0, 0.1)';
     const rejectedColor = config.get<string>('rejectedColor') || 'rgba(255, 0, 0, 0.1)';
+    const allowedColor = config.get<string>('allowedColor') || '#004DFF';
 
     if (warningDecorationType) {warningDecorationType.dispose();}
     if (rejectedDecorationType) {rejectedDecorationType.dispose();}
+    if (allowedGutterDecorationType) {allowedGutterDecorationType.dispose();}
 
     warningDecorationType = vscode.window.createTextEditorDecorationType({
         backgroundColor: warningColor,
@@ -111,6 +135,16 @@ function updateDecorationTypes() {
         backgroundColor: rejectedColor,
         isWholeLine: true,
         overviewRulerColor: 'rgba(255, 0, 0, 0.8)',
+        overviewRulerLane: vscode.OverviewRulerLane.Left
+    });
+
+    // Gutter indicator for reviewed/allowed code (like Git extension)
+    // Uses a small SVG icon in the gutter area next to line numbers
+    const gutterIconPath = path.join(__dirname, '..', 'images', 'gutter-reviewed.svg');
+    allowedGutterDecorationType = vscode.window.createTextEditorDecorationType({
+        gutterIconPath: vscode.Uri.file(gutterIconPath),
+        gutterIconSize: 'contain',
+        overviewRulerColor: allowedColor,
         overviewRulerLane: vscode.OverviewRulerLane.Left
     });
 }
@@ -170,7 +204,7 @@ function triggerUpdate(document: vscode.TextDocument, editor?: vscode.TextEditor
     // Check Cache First
     const cached = decorationCache.get(key);
     if (cached && cached.version === document.version) {
-        applyDecorations(document, cached.warningRanges, cached.rejectedRanges, editor);
+        applyDecorations(document, cached.warningRanges, cached.rejectedRanges, cached.allowedRanges, editor);
         return;
     }
 
@@ -202,13 +236,23 @@ async function updateDiagnostics(document: vscode.TextDocument, token: vscode.Ca
     const rejectedStates = config.get<string[]>('rejectedStates') || ['rejected', 'reject'];
 
     // Pass token to analyzer for deep cancellation
-    const matches = await findAiGenDiagnostics(text, { detectInline, detectFileLevel, tag, allowedStates, rejectedStates, language }, token);
+    // Include allowed matches if indicator is enabled
+    const matches = await findAiGenDiagnostics(text, {
+        detectInline,
+        detectFileLevel,
+        tag,
+        allowedStates,
+        rejectedStates,
+        language,
+        includeAllowed: getShowReviewedIndicators()
+    }, token);
 
     if (token.isCancellationRequested) {return;}
 
     const diagnostics: vscode.Diagnostic[] = [];
     const warningRanges: vscode.Range[] = [];
     const rejectedRanges: vscode.Range[] = [];
+    const allowedRanges: vscode.Range[] = [];
     const allowedStatesMsg = allowedStates.length > 0 ? allowedStates.join("' or '") : "ok";
 
     for (const match of matches) {
@@ -217,17 +261,20 @@ async function updateDiagnostics(document: vscode.TextDocument, token: vscode.Ca
             document.positionAt(match.tagEndOffset)
         );
 
-        const msg = match.type === 'rejected'
-            ? "Code explicitly marked as rejected."
-            : `AI-generated code requires verification. Append '${allowedStatesMsg}' to the tag to dismiss.`;
+        // Only create diagnostics for warning/rejected, not for allowed
+        if (match.type !== 'allowed') {
+            const msg = match.type === 'rejected'
+                ? "Code explicitly marked as rejected."
+                : `AI-generated code requires verification. Append '${allowedStatesMsg}' to the tag to dismiss.`;
 
-        const severity = match.type === 'rejected'
-            ? vscode.DiagnosticSeverity.Error
-            : vscode.DiagnosticSeverity.Warning;
+            const severity = match.type === 'rejected'
+                ? vscode.DiagnosticSeverity.Error
+                : vscode.DiagnosticSeverity.Warning;
 
-        const tagDiagnostic = new vscode.Diagnostic(tagRange, msg, severity);
-        tagDiagnostic.source = 'ack-ai';
-        diagnostics.push(tagDiagnostic);
+            const tagDiagnostic = new vscode.Diagnostic(tagRange, msg, severity);
+            tagDiagnostic.source = 'ack-ai';
+            diagnostics.push(tagDiagnostic);
+        }
 
         if (match.codeStartOffset < match.codeEndOffset) {
             const codeRange = new vscode.Range(
@@ -237,6 +284,8 @@ async function updateDiagnostics(document: vscode.TextDocument, token: vscode.Ca
 
             if (match.type === 'rejected') {
                 rejectedRanges.push(codeRange);
+            } else if (match.type === 'allowed') {
+                allowedRanges.push(codeRange);
             } else {
                 warningRanges.push(codeRange);
             }
@@ -249,17 +298,22 @@ async function updateDiagnostics(document: vscode.TextDocument, token: vscode.Ca
     decorationCache.set(document.uri.toString(), {
         version: document.version,
         warningRanges,
-        rejectedRanges
+        rejectedRanges,
+        allowedRanges
     });
 
-    applyDecorations(document, warningRanges, rejectedRanges);
+    applyDecorations(document, warningRanges, rejectedRanges, allowedRanges);
 }
 
-function applyDecorations(document: vscode.TextDocument, warningRanges: vscode.Range[], rejectedRanges: vscode.Range[], specificEditor?: vscode.TextEditor) {
+function applyDecorations(document: vscode.TextDocument, warningRanges: vscode.Range[], rejectedRanges: vscode.Range[], allowedRanges: vscode.Range[], specificEditor?: vscode.TextEditor) {
+    // Only show allowed decorations if the feature is enabled
+    const effectiveAllowedRanges = getShowReviewedIndicators() ? allowedRanges : [];
+
     if (specificEditor) {
         if (specificEditor.document.uri.toString() === document.uri.toString()) {
             specificEditor.setDecorations(warningDecorationType, warningRanges);
             specificEditor.setDecorations(rejectedDecorationType, rejectedRanges);
+            specificEditor.setDecorations(allowedGutterDecorationType, effectiveAllowedRanges);
         }
         return;
     }
@@ -268,6 +322,7 @@ function applyDecorations(document: vscode.TextDocument, warningRanges: vscode.R
         if (editor.document.uri.toString() === document.uri.toString()) {
             editor.setDecorations(warningDecorationType, warningRanges);
             editor.setDecorations(rejectedDecorationType, rejectedRanges);
+            editor.setDecorations(allowedGutterDecorationType, effectiveAllowedRanges);
         }
     });
 }
@@ -295,4 +350,5 @@ export function deactivate() {
     // Dispose decoration types
     if (warningDecorationType) {warningDecorationType.dispose();}
     if (rejectedDecorationType) {rejectedDecorationType.dispose();}
+    if (allowedGutterDecorationType) {allowedGutterDecorationType.dispose();}
 }

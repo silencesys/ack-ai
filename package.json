@@ -2,7 +2,7 @@
   "name": "ack-ai",
   "displayName": "Ack-AI",
   "description": "Flags @ai-gen tags in DocBlocks that haven't been marked as 'ok'.",
-  "version": "0.0.2",
+  "version": "1.0.0",
   "publisher": "silencesys",
   "icon": "images/icon.png",
   "repository": {
@@ -21,10 +21,40 @@
     "onLanguage:javascript",
     "onLanguage:typescript",
     "onLanguage:javascriptreact",
-    "onLanguage:typescriptreact"
+    "onLanguage:typescriptreact",
+    "onLanguage:java",
+    "onLanguage:c",
+    "onLanguage:cpp",
+    "onLanguage:csharp",
+    "onLanguage:go",
+    "onLanguage:rust",
+    "onLanguage:swift",
+    "onLanguage:kotlin",
+    "onLanguage:scala",
+    "onLanguage:dart",
+    "onLanguage:groovy",
+    "onLanguage:objective-c",
+    "onLanguage:objective-cpp",
+    "onLanguage:python",
+    "onLanguage:ruby",
+    "onLanguage:shellscript",
+    "onLanguage:perl",
+    "onLanguage:r",
+    "onLanguage:yaml",
+    "onLanguage:dockerfile",
+    "onLanguage:makefile",
+    "onLanguage:coffeescript",
+    "onLanguage:powershell",
+    "onLanguage:elixir"
   ],
   "main": "./out/extension.js",
   "contributes": {
+    "commands": [
+      {
+        "command": "ackAi.toggleAllowedIndicators",
+        "title": "Ack-AI: Toggle Reviewed Code Indicators"
+      }
+    ],
     "configuration": {
       "title": "Ack-AI Settings",
       "properties": {
@@ -63,6 +93,16 @@
           "type": "string",
           "default": "rgba(255, 0, 0, 0.1)",
           "description": "Background color for rejected code (CSS color string)."
+        },
+        "ackAi.allowedColor": {
+          "type": "string",
+          "default": "#004DFF",
+          "description": "Color for the gutter indicator on reviewed code (CSS color string)."
+        },
+        "ackAi.showReviewedIndicators": {
+          "type": "boolean",
+          "default": false,
+          "description": "Show indicators for reviewed (@ai-gen ok) code blocks. Can also be toggled via command palette."
         },
         "ackAi.detectInlineComments": {
           "type": "boolean",
