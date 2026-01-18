@@ -1,5 +1,5 @@
 import * as vscode from 'vscode';
-import { findAiGenDiagnostics } from './analyzer';
+import { findAiGenDiagnostics, LanguageType } from './analyzer';
 
 let diagnosticCollection: vscode.DiagnosticCollection;
 let warningDecorationType: vscode.TextEditorDecorationType;
@@ -115,12 +115,53 @@ function updateDecorationTypes() {
     });
 }
 
+// Map VS Code languageId to analyzer LanguageType
+function getAnalyzerLanguage(languageId: string): LanguageType | null {
+    switch (languageId) {
+        // C-style comments: // and /** */
+        case 'javascript':
+        case 'typescript':
+        case 'javascriptreact':
+        case 'typescriptreact':
+        case 'php':
+        case 'java':
+        case 'c':
+        case 'cpp':
+        case 'csharp':
+        case 'go':
+        case 'rust':
+        case 'swift':
+        case 'kotlin':
+        case 'scala':
+        case 'dart':
+        case 'groovy':
+        case 'objective-c':
+        case 'objective-cpp':
+            return 'javascript'; // C-style comments
+        // Python-style: # and """ or '''
+        case 'python':
+            return 'python';
+        // Hash-only comments: #
+        case 'ruby':
+        case 'shellscript':
+        case 'perl':
+        case 'r':
+        case 'yaml':
+        case 'dockerfile':
+        case 'makefile':
+        case 'coffeescript':
+        case 'powershell':
+        case 'elixir':
+            return 'hash';
+        default:
+            return null; // Unsupported language
+    }
+}
+
 function triggerUpdate(document: vscode.TextDocument, editor?: vscode.TextEditor) {
     // Check language support first to avoid overhead
-    const supportedLanguages = [
-        'php', 'javascript', 'typescript', 'javascriptreact', 'typescriptreact'
-    ];
-    if (!supportedLanguages.includes(document.languageId)) {
+    const language = getAnalyzerLanguage(document.languageId);
+    if (!language) {
         return;
     }
 
@@ -145,11 +186,11 @@ function triggerUpdate(document: vscode.TextDocument, editor?: vscode.TextEditor
 
     // Use setImmediate to defer execution slightly, keeping typing responsive
     setImmediate(() => {
-        updateDiagnostics(document, source.token);
+        updateDiagnostics(document, source.token, language);
     });
 }
 
-async function updateDiagnostics(document: vscode.TextDocument, token: vscode.CancellationToken) {
+async function updateDiagnostics(document: vscode.TextDocument, token: vscode.CancellationToken, language: LanguageType) {
     if (token.isCancellationRequested) {return;}
 
     const text = document.getText();
@@ -161,7 +202,7 @@ async function updateDiagnostics(document: vscode.TextDocument, token: vscode.Ca
     const rejectedStates = config.get<string[]>('rejectedStates') || ['rejected', 'reject'];
 
     // Pass token to analyzer for deep cancellation
-    const matches = await findAiGenDiagnostics(text, { detectInline, detectFileLevel, tag, allowedStates, rejectedStates }, token);
+    const matches = await findAiGenDiagnostics(text, { detectInline, detectFileLevel, tag, allowedStates, rejectedStates, language }, token);
 
     if (token.isCancellationRequested) {return;}
 
