@@ -96,8 +96,17 @@
         },
         "ackAi.allowedColor": {
           "type": "string",
-          "default": "#004DFF",
+          "default": "rgba(0, 77, 255, 0.1)",
           "description": "Color for the gutter indicator on reviewed code (CSS color string)."
+        },
+        "ackAi.reviewedIndicatorStyle": {
+          "type": "string",
+          "enum": [
+            "gutter",
+            "background"
+          ],
+          "default": "gutter",
+          "description": "Style for reviewed code indicators: 'gutter' shows a subtle line in the gutter area, 'background' highlights the entire line with color."
         },
         "ackAi.showReviewedIndicators": {
           "type": "boolean",

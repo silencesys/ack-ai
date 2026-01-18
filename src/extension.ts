@@ -1,11 +1,10 @@
 import * as vscode from 'vscode';
-import * as path from 'path';
 import { findAiGenDiagnostics, LanguageType } from './analyzer';
 
 let diagnosticCollection: vscode.DiagnosticCollection;
 let warningDecorationType: vscode.TextEditorDecorationType;
 let rejectedDecorationType: vscode.TextEditorDecorationType;
-let allowedGutterDecorationType: vscode.TextEditorDecorationType;
+let allowedDecorationType: vscode.TextEditorDecorationType;
 
 // Helper to get the current showReviewedIndicators setting
 function getShowReviewedIndicators(): boolean {
@@ -114,15 +113,72 @@ export function activate(context: vscode.ExtensionContext) {
     );
 }
 
+// Helper to ensure color has minimum opacity (for overview ruler visibility)
+function ensureMinOpacity(color: string, minOpacity: number): string {
+    // Handle Hex with Alpha (#RRGGBBAA or #RGBA)
+    if (color.startsWith('#')) {
+        if (color.length === 9) { // #RRGGBBAA
+            const alphaHex = color.substring(7, 9);
+            const alpha = parseInt(alphaHex, 16) / 255;
+            if (alpha < minOpacity) {
+                const newAlpha = Math.floor(minOpacity * 255).toString(16).padStart(2, '0');
+                return color.substring(0, 7) + newAlpha;
+            }
+            return color;
+        } else if (color.length === 5) { // #RGBA
+            const alphaHex = color.substring(4, 5);
+            // Expand single digit alpha: 'A' -> 'AA' -> /255
+            const alpha = parseInt(alphaHex + alphaHex, 16) / 255;
+            if (alpha < minOpacity) {
+                const newAlpha = Math.floor(minOpacity * 255).toString(16).padStart(2, '0');
+                // Convert to 8-digit hex for precision: #RGB + newAlpha
+                const r = color[1], g = color[2], b = color[3];
+                return `#${r}${r}${g}${g}${b}${b}${newAlpha}`;
+            }
+            return color;
+        }
+        // #RRGGBB or #RGB - assume alpha 1, which is > minOpacity (unless min > 1)
+        return color;
+    }
+
+    // Handle rgba(r, g, b, a)
+    if (color.startsWith('rgba')) {
+        const match = color.match(/rgba\s*\(\s*(\d+)\s*,\s*(\d+)\s*,\s*(\d+)\s*,\s*([0-9.]+)\s*\)/);
+        if (match) {
+            let alpha = parseFloat(match[4]);
+            if (alpha < minOpacity) {
+                return `rgba(${match[1]}, ${match[2]}, ${match[3]}, ${minOpacity})`;
+            }
+        }
+        return color;
+    }
+
+    // Handle hsla(h, s, l, a)
+    if (color.startsWith('hsla')) {
+        const match = color.match(/hsla\s*\(\s*(\d+)\s*,\s*([\d.]+%?)\s*,\s*([\d.]+%?)\s*,\s*([0-9.]+)\s*\)/);
+        if (match) {
+            let alpha = parseFloat(match[4]);
+            if (alpha < minOpacity) {
+                return `hsla(${match[1]}, ${match[2]}, ${match[3]}, ${minOpacity})`;
+            }
+        }
+        return color;
+    }
+
+    // Fallback for rgb() or named colors (assume alpha 1)
+    return color;
+}
+
 function updateDecorationTypes() {
     const config = vscode.workspace.getConfiguration('ackAi');
     const warningColor = config.get<string>('warningColor') || 'rgba(255, 215, 0, 0.1)';
     const rejectedColor = config.get<string>('rejectedColor') || 'rgba(255, 0, 0, 0.1)';
     const allowedColor = config.get<string>('allowedColor') || '#004DFF';
+    const indicatorStyle = config.get<string>('reviewedIndicatorStyle') || 'gutter';
 
     if (warningDecorationType) {warningDecorationType.dispose();}
     if (rejectedDecorationType) {rejectedDecorationType.dispose();}
-    if (allowedGutterDecorationType) {allowedGutterDecorationType.dispose();}
+    if (allowedDecorationType) {allowedDecorationType.dispose();}
 
     warningDecorationType = vscode.window.createTextEditorDecorationType({
         backgroundColor: warningColor,
@@ -138,15 +194,33 @@ function updateDecorationTypes() {
         overviewRulerLane: vscode.OverviewRulerLane.Left
     });
 
-    // Gutter indicator for reviewed/allowed code (like Git extension)
-    // Uses a small SVG icon in the gutter area next to line numbers
-    const gutterIconPath = path.join(__dirname, '..', 'images', 'gutter-reviewed.svg');
-    allowedGutterDecorationType = vscode.window.createTextEditorDecorationType({
-        gutterIconPath: vscode.Uri.file(gutterIconPath),
-        gutterIconSize: 'contain',
-        overviewRulerColor: allowedColor,
-        overviewRulerLane: vscode.OverviewRulerLane.Left
-    });
+    // Configure allowed code indicator based on style preference
+    if (indicatorStyle === 'background') {
+        allowedDecorationType = vscode.window.createTextEditorDecorationType({
+            backgroundColor: allowedColor,
+            isWholeLine: true,
+            overviewRulerColor: allowedColor,
+            overviewRulerLane: vscode.OverviewRulerLane.Left
+        });
+    } else {
+        // Default to gutter indicator (like Git extension)
+        
+        // Ensure the overview ruler AND the gutter icon are visible even if the user picked a very subtle color
+        const gutterColor = ensureMinOpacity(allowedColor, 0.3);
+
+        // Generate SVG dynamically to respect the allowedColor
+        // We use a simple rect like the original file: images/gutter-reviewed.svg
+        const svgContent = `<svg xmlns="http://www.w3.org/2000/svg" width="6" height="16" viewBox="0 0 6 16"><rect x="0" y="0" width="1" height="16" fill="${gutterColor}" /></svg>`;
+        const svg64 = Buffer.from(svgContent).toString('base64');
+        const gutterIconUri = vscode.Uri.parse(`data:image/svg+xml;base64,${svg64}`);
+
+        allowedDecorationType = vscode.window.createTextEditorDecorationType({
+            gutterIconPath: gutterIconUri,
+            gutterIconSize: 'contain',
+            overviewRulerColor: gutterColor,
+            overviewRulerLane: vscode.OverviewRulerLane.Left
+        });
+    }
 }
 
 // Map VS Code languageId to analyzer LanguageType
@@ -313,7 +387,7 @@ function applyDecorations(document: vscode.TextDocument, warningRanges: vscode.R
         if (specificEditor.document.uri.toString() === document.uri.toString()) {
             specificEditor.setDecorations(warningDecorationType, warningRanges);
             specificEditor.setDecorations(rejectedDecorationType, rejectedRanges);
-            specificEditor.setDecorations(allowedGutterDecorationType, effectiveAllowedRanges);
+            specificEditor.setDecorations(allowedDecorationType, effectiveAllowedRanges);
         }
         return;
     }
@@ -322,7 +396,7 @@ function applyDecorations(document: vscode.TextDocument, warningRanges: vscode.R
         if (editor.document.uri.toString() === document.uri.toString()) {
             editor.setDecorations(warningDecorationType, warningRanges);
             editor.setDecorations(rejectedDecorationType, rejectedRanges);
-            editor.setDecorations(allowedGutterDecorationType, effectiveAllowedRanges);
+            editor.setDecorations(allowedDecorationType, effectiveAllowedRanges);
         }
     });
 }
@@ -350,5 +424,5 @@ export function deactivate() {
     // Dispose decoration types
     if (warningDecorationType) {warningDecorationType.dispose();}
     if (rejectedDecorationType) {rejectedDecorationType.dispose();}
-    if (allowedGutterDecorationType) {allowedGutterDecorationType.dispose();}
+    if (allowedDecorationType) {allowedDecorationType.dispose();}
 }

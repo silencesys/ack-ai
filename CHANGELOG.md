@@ -20,7 +20,7 @@ This release dramatically expands Ack-AI's language support from 3 to 25+ progra
 ### New Settings
 
 - `ackAi.showReviewedIndicators` - Permanently enable/disable gutter indicators for reviewed code (default: `false`). Can also be toggled via command palette.
-- `ackAi.allowedColor` - Customize the color of the gutter indicator for reviewed code (default: `#004DFF`)
+- `ackAi.allowedColor` - Customize the color of the gutter indicator for reviewed code (default: `rgba(0, 77, 255, 0.1)`)
 
 ### Performance Improvements
 
