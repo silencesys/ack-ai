@@ -84,6 +84,16 @@
           ],
           "description": "List of keywords that mark the code as rejected (case-insensitive)."
         },
+        "ackAi.detectInlineComments": {
+          "type": "boolean",
+          "default": true,
+          "description": "Whether to detect @ai-gen tags in inline comments (//)."
+        },
+        "ackAi.detectFileLevelComments": {
+          "type": "boolean",
+          "default": true,
+          "description": "Whether to highlight the entire file when @ai-gen is at the top of the file."
+        },
         "ackAi.warningColor": {
           "type": "string",
           "default": "rgba(255, 215, 0, 0.1)",
@@ -94,10 +104,10 @@
           "default": "rgba(255, 0, 0, 0.1)",
           "description": "Background color for rejected code (CSS color string)."
         },
-        "ackAi.allowedColor": {
-          "type": "string",
-          "default": "rgba(0, 77, 255, 0.1)",
-          "description": "Color for the gutter indicator on reviewed code (CSS color string)."
+        "ackAi.showReviewedIndicators": {
+          "type": "boolean",
+          "default": false,
+          "description": "Show indicators for reviewed (@ai-gen ok) code blocks. Can also be toggled via command palette."
         },
         "ackAi.reviewedIndicatorStyle": {
           "type": "string",
@@ -108,20 +118,10 @@
           "default": "gutter",
           "description": "Style for reviewed code indicators: 'gutter' shows a subtle line in the gutter area, 'background' highlights the entire line with color."
         },
-        "ackAi.showReviewedIndicators": {
-          "type": "boolean",
-          "default": false,
-          "description": "Show indicators for reviewed (@ai-gen ok) code blocks. Can also be toggled via command palette."
-        },
-        "ackAi.detectInlineComments": {
-          "type": "boolean",
-          "default": true,
-          "description": "Whether to detect @ai-gen tags in inline comments (//)."
-        },
-        "ackAi.detectFileLevelComments": {
-          "type": "boolean",
-          "default": true,
-          "description": "Whether to highlight the entire file when @ai-gen is at the top of the file."
+        "ackAi.allowedColor": {
+          "type": "string",
+          "default": "rgba(0, 77, 255, 0.1)",
+          "description": "Color for the gutter indicator on reviewed code (CSS color string)."
         }
       }
     }
