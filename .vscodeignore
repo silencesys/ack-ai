@@ -1,0 +1,8 @@
+src/**
+.gitignore
+tsconfig.json
+**/*.map
+test-cases/**
+vitest.config.js
+vitest.config.ts
+out/analyzer.test.js
