@@ -2,7 +2,7 @@
   "name": "ack-ai",
   "displayName": "Ack-AI",
   "description": "Flags @ai-gen tags in DocBlocks that haven't been marked as 'ok'.",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "publisher": "silencesys",
   "icon": "images/icon.png",
   "repository": {
