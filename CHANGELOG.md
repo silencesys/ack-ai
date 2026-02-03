@@ -2,6 +2,12 @@
 
 All notable changes to the Ack-AI extension will be documented in this file.
 
+## [1.0.1] - 2026-02-03
+
+### Bug Fixes
+
+- **Fixed TypeScript function highlighting** - Resolved an issue where TypeScript functions were not being highlighted correctly
+
 ## [1.0.0] - 2026-01-18
 
 ### 🎉 Major Release - Extended Language Support
