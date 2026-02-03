@@ -292,6 +292,7 @@ function findBlockEndOffset(text: string, startOffset: number): number {
   // The { in "= {}" is inside parens (parenDepth > 0). The function body { comes after ).
   let parenDepth = 0;
   let maxParenDepth = 0;
+  let angleDepth = 0;
   let lastSignificant = 0; // Track last significant char for regex detection
 
   while (i < len) {
@@ -328,20 +329,31 @@ function findBlockEndOffset(text: string, startOffset: number): number {
         maxParenDepth = parenDepth;
       }
     } else if (char === 41) { // ')'
-      parenDepth--;
+      if (parenDepth > 0) {
+        parenDepth--;
+      }
+    }
+    // Track angle brackets (generics) - only outside parentheses to avoid confusing with 'less than' in conditions
+    else if (char === 60 && parenDepth === 0) { // '<'
+      angleDepth++;
+    } else if (char === 62 && parenDepth === 0) { // '>'
+      if (angleDepth > 0) {
+        angleDepth--;
+      }
     }
     // Found opening brace
     else if (char === 123) { // '{'
       // Accept { only if:
       // 1. We're outside all parentheses (parenDepth === 0)
-      // 2. We've seen at least one ( before (maxParenDepth > 0) - meaning we passed function params
+      // 2. We're outside all generic type definitions (angleDepth === 0)
+      // 3. We've seen at least one ( before (maxParenDepth > 0) - meaning we passed function params
       //    OR we never saw any ( - meaning it's a class or object literal right after the comment
-      if (parenDepth === 0) {
+      if (parenDepth === 0 && angleDepth === 0) {
         break;
       }
     }
     // Semicolon means end of statement (type declaration, etc.)
-    else if (char === 59 && parenDepth === 0) {
+    else if (char === 59 && parenDepth === 0 && angleDepth === 0) {
       return i + 1;
     }
 
