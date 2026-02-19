@@ -5,11 +5,39 @@ let diagnosticCollection: vscode.DiagnosticCollection;
 let warningDecorationType: vscode.TextEditorDecorationType;
 let rejectedDecorationType: vscode.TextEditorDecorationType;
 let allowedDecorationType: vscode.TextEditorDecorationType;
+let showReviewedIndicators = false;
+
+interface AnalyzerRuntimeSettings {
+    detectInline: boolean;
+    detectFileLevel: boolean;
+    tag: string;
+    allowedStates: string[];
+    rejectedStates: string[];
+}
+
+let analyzerSettings: AnalyzerRuntimeSettings = {
+    detectInline: true,
+    detectFileLevel: true,
+    tag: '@ai-gen',
+    allowedStates: ['ok'],
+    rejectedStates: ['rejected', 'reject']
+};
 
 // Helper to get the current showReviewedIndicators setting
 function getShowReviewedIndicators(): boolean {
+    return showReviewedIndicators;
+}
+
+function refreshRuntimeSettings(): void {
     const config = vscode.workspace.getConfiguration('ackAi');
-    return config.get<boolean>('showReviewedIndicators') ?? false;
+    showReviewedIndicators = config.get<boolean>('showReviewedIndicators') ?? false;
+    analyzerSettings = {
+        detectInline: config.get<boolean>('detectInlineComments') ?? true,
+        detectFileLevel: config.get<boolean>('detectFileLevelComments') ?? true,
+        tag: config.get<string>('tag') || '@ai-gen',
+        allowedStates: config.get<string[]>('allowedStates') || ['ok'],
+        rejectedStates: config.get<string[]>('rejectedStates') || ['rejected', 'reject']
+    };
 }
 
 // Map to manage cancellation tokens per document (URI string)
@@ -28,6 +56,8 @@ const decorationCache = new Map<string, DecorationCacheEntry>();
 export function activate(context: vscode.ExtensionContext) {
     console.log('Ack-AI is now active');
 
+    refreshRuntimeSettings();
+
     diagnosticCollection = vscode.languages.createDiagnosticCollection('ack-ai');
     context.subscriptions.push(diagnosticCollection);
 
@@ -43,6 +73,7 @@ export function activate(context: vscode.ExtensionContext) {
             const config = vscode.workspace.getConfiguration('ackAi');
             const current = config.get<boolean>('showReviewedIndicators') ?? false;
             await config.update('showReviewedIndicators', !current, vscode.ConfigurationTarget.Global);
+            showReviewedIndicators = !current;
 
             // Note: The onDidChangeConfiguration handler will take care of refreshing
             const status = !current ? 'enabled' : 'disabled';
@@ -76,11 +107,20 @@ export function activate(context: vscode.ExtensionContext) {
 
         // Handle split view changes or closing/opening groups
         vscode.window.onDidChangeVisibleTextEditors(editors => {
-            editors.forEach(editor => triggerUpdate(editor.document));
+            const seenDocuments = new Set<string>();
+            for (const editor of editors) {
+                const key = editor.document.uri.toString();
+                if (seenDocuments.has(key)) {
+                    continue;
+                }
+                seenDocuments.add(key);
+                triggerUpdate(editor.document, editor);
+            }
         }),
 
         vscode.workspace.onDidChangeConfiguration(e => {
             if (e.affectsConfiguration('ackAi')) {
+                refreshRuntimeSettings();
                 updateDecorationTypes();
                 // Clear cache to force re-render with new colors/logic if needed (though ranges might be same, safer to clear)
                 decorationCache.clear();
@@ -204,7 +244,7 @@ function updateDecorationTypes() {
         });
     } else {
         // Default to gutter indicator (like Git extension)
-        
+
         // Ensure the overview ruler AND the gutter icon are visible even if the user picked a very subtle color
         const gutterColor = ensureMinOpacity(allowedColor, 0.3);
 
@@ -267,13 +307,14 @@ function getAnalyzerLanguage(languageId: string): LanguageType | null {
 }
 
 function triggerUpdate(document: vscode.TextDocument, editor?: vscode.TextEditor) {
+    const key = document.uri.toString();
+
     // Check language support first to avoid overhead
     const language = getAnalyzerLanguage(document.languageId);
     if (!language) {
+        clearDocumentArtifacts(document, editor);
         return;
     }
-
-    const key = document.uri.toString();
 
     // Check Cache First
     const cached = decorationCache.get(key);
@@ -298,16 +339,42 @@ function triggerUpdate(document: vscode.TextDocument, editor?: vscode.TextEditor
     });
 }
 
+function clearDocumentArtifacts(document: vscode.TextDocument, specificEditor?: vscode.TextEditor): void {
+    const key = document.uri.toString();
+
+    diagnosticCollection.delete(document.uri);
+    decorationCache.delete(key);
+
+    const source = tokenSources.get(key);
+    if (source) {
+        source.cancel();
+        source.dispose();
+        tokenSources.delete(key);
+    }
+
+    if (specificEditor) {
+        if (specificEditor.document.uri.toString() === key) {
+            specificEditor.setDecorations(warningDecorationType, []);
+            specificEditor.setDecorations(rejectedDecorationType, []);
+            specificEditor.setDecorations(allowedDecorationType, []);
+        }
+        return;
+    }
+
+    vscode.window.visibleTextEditors.forEach(editor => {
+        if (editor.document.uri.toString() === key) {
+            editor.setDecorations(warningDecorationType, []);
+            editor.setDecorations(rejectedDecorationType, []);
+            editor.setDecorations(allowedDecorationType, []);
+        }
+    });
+}
+
 async function updateDiagnostics(document: vscode.TextDocument, token: vscode.CancellationToken, language: LanguageType) {
     if (token.isCancellationRequested) {return;}
 
     const text = document.getText();
-    const config = vscode.workspace.getConfiguration('ackAi');
-    const detectInline = config.get<boolean>('detectInlineComments') ?? true;
-    const detectFileLevel = config.get<boolean>('detectFileLevelComments') ?? true;
-    const tag = config.get<string>('tag') || '@ai-gen';
-    const allowedStates = config.get<string[]>('allowedStates') || ['ok'];
-    const rejectedStates = config.get<string[]>('rejectedStates') || ['rejected', 'reject'];
+    const { detectInline, detectFileLevel, tag, allowedStates, rejectedStates } = analyzerSettings;
 
     // Pass token to analyzer for deep cancellation
     // Include allowed matches if indicator is enabled
@@ -381,10 +448,11 @@ async function updateDiagnostics(document: vscode.TextDocument, token: vscode.Ca
 
 function applyDecorations(document: vscode.TextDocument, warningRanges: vscode.Range[], rejectedRanges: vscode.Range[], allowedRanges: vscode.Range[], specificEditor?: vscode.TextEditor) {
     // Only show allowed decorations if the feature is enabled
-    const effectiveAllowedRanges = getShowReviewedIndicators() ? allowedRanges : [];
+    const effectiveAllowedRanges = showReviewedIndicators ? allowedRanges : [];
+    const documentKey = document.uri.toString();
 
     if (specificEditor) {
-        if (specificEditor.document.uri.toString() === document.uri.toString()) {
+        if (specificEditor.document.uri.toString() === documentKey) {
             specificEditor.setDecorations(warningDecorationType, warningRanges);
             specificEditor.setDecorations(rejectedDecorationType, rejectedRanges);
             specificEditor.setDecorations(allowedDecorationType, effectiveAllowedRanges);
@@ -393,7 +461,7 @@ function applyDecorations(document: vscode.TextDocument, warningRanges: vscode.R
     }
 
     vscode.window.visibleTextEditors.forEach(editor => {
-        if (editor.document.uri.toString() === document.uri.toString()) {
+        if (editor.document.uri.toString() === documentKey) {
             editor.setDecorations(warningDecorationType, warningRanges);
             editor.setDecorations(rejectedDecorationType, rejectedRanges);
             editor.setDecorations(allowedDecorationType, effectiveAllowedRanges);

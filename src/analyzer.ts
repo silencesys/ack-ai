@@ -43,6 +43,7 @@ const NON_WHITESPACE_PATTERN = /\S/g;
 // Pre-compiled regex patterns for tag content cleaning (avoid creating on each match)
 const JS_BLOCK_END_PATTERN = /\s*\*\/$/;
 const PY_DOCSTRING_END_PATTERN = /\s*(?:"""|''')$/;
+const TAG_REGEX_CACHE = new Map<string, RegExp>();
 
 // Time-slicing configuration
 const YIELD_INTERVAL_MS = 15; // Yield every 15ms to keep UI responsive
@@ -92,21 +93,19 @@ export async function findAiGenDiagnostics(text: string, options: Partial<Analyz
   const allowedStatesSet = new Set(allowedStates.map(s => s.toLowerCase()));
   const rejectedStatesSet = new Set(rejectedStates.map(s => s.toLowerCase()));
 
-  const escapedTag = escapeRegExp(tag);
-  const tagRegex = new RegExp(`${escapedTag}\\s*(.*)`, 'i');
+  const tagRegex = getTagRegex(tag);
 
   // Check for file-level comment first (comment at the very start of the file)
   let fileLevelCommentEndOffset = -1;
   if (detectFileLevel) {
-    const fileLevelResult = checkFileLevelComment(text, tagRegex, allowedStatesSet, rejectedStatesSet, detectInline, fileLevelCommentPattern, isPython || isHash);
+    const fileLevelResult = checkFileLevelComment(text, tagRegex, tag.length, allowedStatesSet, rejectedStatesSet, detectInline, fileLevelCommentPattern, isPython || isHash);
     if (fileLevelResult) {
       matches.push(fileLevelResult.match);
       fileLevelCommentEndOffset = fileLevelResult.commentEndOffset;
     }
   }
 
-  const mainPattern = detectInline ? allCommentsPattern : docBlockPattern;
-  mainPattern.lastIndex = 0;
+  const mainPattern = createWorkingPattern(detectInline ? allCommentsPattern : docBlockPattern);
 
   let startTime = Date.now();
   let match;
@@ -144,12 +143,7 @@ export async function findAiGenDiagnostics(text: string, options: Partial<Analyz
 
     if (tagMatch) {
       const rawContent = tagMatch[1];
-      // Clean trailing comment syntax: */ for JS, """ or ''' for Python
-      const tagContent = rawContent
-        .replace(JS_BLOCK_END_PATTERN, '')   // JS block comment end
-        .replace(PY_DOCSTRING_END_PATTERN, '') // Python docstring end
-        .trim()
-        .toLowerCase();
+      const tagContent = normalizeTagState(rawContent);
 
       const isAllowed = allowedStatesSet.has(tagContent);
 
@@ -163,7 +157,7 @@ export async function findAiGenDiagnostics(text: string, options: Partial<Analyz
         : rejectedStatesSet.has(tagContent) ? 'rejected' : 'warning';
 
       const tagStartOffset = commentStartOffset + tagMatch.index;
-      const tagEndOffset = tagStartOffset + tagMatch[0].length;
+      const tagEndOffset = tagStartOffset + tag.length;
 
       NON_WHITESPACE_PATTERN.lastIndex = commentEndOffset;
       const codeMatch = NON_WHITESPACE_PATTERN.exec(text);
@@ -179,7 +173,13 @@ export async function findAiGenDiagnostics(text: string, options: Partial<Analyz
 
         if (isInlineComment) {
           const nextNewline = text.indexOf('\n', codeStartOffset);
-          codeEndOffset = nextNewline !== -1 ? nextNewline : text.length;
+          if (nextNewline !== -1) {
+            // Clamp end before newline to avoid whole-line decoration visually spilling
+            // into the next line in the editor.
+            codeEndOffset = Math.max(codeStartOffset + 1, nextNewline - 1);
+          } else {
+            codeEndOffset = text.length;
+          }
         } else if (isPython) {
           codeEndOffset = findPythonBlockEndOffset(text, codeStartOffset);
         } else {
@@ -213,6 +213,7 @@ interface FileLevelResult {
 function checkFileLevelComment(
   text: string,
   tagRegex: RegExp,
+  tagLength: number,
   allowedStatesSet: Set<string>,
   rejectedStatesSet: Set<string>,
   detectInline: boolean,
@@ -240,12 +241,7 @@ function checkFileLevelComment(
   }
 
   const rawContent = tagMatch[1];
-  // Clean trailing comment syntax: */ for JS, """ or ''' for Python
-  const tagContent = rawContent
-    .replace(JS_BLOCK_END_PATTERN, '')   // JS block comment end
-    .replace(PY_DOCSTRING_END_PATTERN, '') // Python docstring end
-    .trim()
-    .toLowerCase();
+  const tagContent = normalizeTagState(rawContent);
 
   // If state is allowed, skip
   if (allowedStatesSet.has(tagContent)) {
@@ -257,7 +253,7 @@ function checkFileLevelComment(
   const commentStartOffset = leadingWhitespace.length;
   const commentEndOffset = commentStartOffset + fullComment.length;
   const tagStartOffset = commentStartOffset + tagMatch.index;
-  const tagEndOffset = tagStartOffset + tagMatch[0].length;
+  const tagEndOffset = tagStartOffset + tagLength;
 
   return {
     match: {
@@ -622,8 +618,32 @@ function skipString(text: string, start: number, quoteChar: number, len?: number
   return textLen;
 }
 
+function normalizeTagState(rawContent: string): string {
+  return rawContent
+    .replace(JS_BLOCK_END_PATTERN, '')
+    .replace(PY_DOCSTRING_END_PATTERN, '')
+    .trim()
+    .toLowerCase();
+}
+
+function getTagRegex(tag: string): RegExp {
+  const cached = TAG_REGEX_CACHE.get(tag);
+  if (cached) {
+    return cached;
+  }
+
+  const escapedTag = escapeRegExp(tag);
+  const compiled = new RegExp(`${escapedTag}\\s*(.*)`, 'i');
+  TAG_REGEX_CACHE.set(tag, compiled);
+  return compiled;
+}
+
+function createWorkingPattern(pattern: RegExp): RegExp {
+  return new RegExp(pattern.source, pattern.flags);
+}
+
 function escapeRegExp(string: string): string {
-  return string.replace(/[.*+?^${}()|[\\]/g, '\\$&');
+  return string.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 }
 
 /**

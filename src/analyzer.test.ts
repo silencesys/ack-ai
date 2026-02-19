@@ -1,4 +1,4 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
 import { findAiGenDiagnostics } from './analyzer';
 
 describe('AI Gen Analyzer', () => {
@@ -15,7 +15,7 @@ function test() {
     const matches = await findAiGenDiagnostics(code);
     expect(matches).toHaveLength(1);
     expect(matches[0].type).toBe('warning');
-    
+
     const tagIndex = code.indexOf('@ai-gen');
     expect(matches[0].tagStartOffset).toBeGreaterThanOrEqual(tagIndex);
   });
@@ -41,6 +41,15 @@ class A {}
     const matches = await findAiGenDiagnostics(code);
     expect(matches).toHaveLength(1);
     expect(matches[0].type).toBe('warning');
+  });
+
+  it('should underline only the tag token, not trailing comment syntax', async () => {
+    const code = `/** @ai-gen */\nconst x = 1;`;
+    const matches = await findAiGenDiagnostics(code);
+    expect(matches).toHaveLength(1);
+
+    const underlined = code.slice(matches[0].tagStartOffset, matches[0].tagEndOffset);
+    expect(underlined).toBe('@ai-gen');
   });
 
   it('should calculate code range for single line statement', async () => {
@@ -128,13 +137,13 @@ function foo() {
 
   it('should ignore braces inside template literals', async () => {
     // Constructing string with concatenation to avoid template literal confusion
-    const code = 'const prefix = 0;\n' + 
-                 '/** @ai-gen */\n' + 
-                 'function foo() {\n' + 
-                 '  const str = ` { not a brace }`;\n' + 
-                 '  return true;\n' + 
+    const code = 'const prefix = 0;\n' +
+                 '/** @ai-gen */\n' +
+                 'function foo() {\n' +
+                 '  const str = ` { not a brace }`;\n' +
+                 '  return true;\n' +
                  '}\n';
-    
+
     const matches = await findAiGenDiagnostics(code);
     expect(matches).toHaveLength(1);
 
@@ -147,7 +156,7 @@ function foo() {
 /** @ai-gen */
 function foo() {
   const x = 1;
-  const str = 
+  const str =
   return true;
 }
 `;
@@ -249,7 +258,8 @@ if (true) {
     const nextNewline = code.indexOf('\n', codeStart);
 
     expect(matches[0].codeStartOffset).toBe(codeStart);
-    expect(matches[0].codeEndOffset).toBe(nextNewline);
+    expect(matches[0].codeEndOffset).toBeGreaterThan(codeStart);
+    expect(matches[0].codeEndOffset).toBeLessThan(nextNewline);
   });
 
   it('should detect custom tags', async () => {
@@ -274,6 +284,18 @@ function test() {}
     expect(matches).toHaveLength(0);
   });
 
+  it('should support custom tags with regex metacharacters', async () => {
+    const code = `
+/**
+ * @ai-gen+
+ */
+function test() {}
+`;
+    const matches = await findAiGenDiagnostics(code, { tag: '@ai-gen+' });
+    expect(matches).toHaveLength(1);
+    expect(matches[0].type).toBe('warning');
+  });
+
   it('should support multiple allowed states (case insensitive)', async () => {
     const code = `
 /** @ai-gen reviewed */
@@ -286,9 +308,9 @@ const b = 2;
 const c = 3;
 `;
     const matches = await findAiGenDiagnostics(code, {
-      allowedStates: ['reviewed', 'passing'] 
+      allowedStates: ['reviewed', 'passing']
     });
-    
+
     // Should match ONLY the 'rejected' one
     expect(matches).toHaveLength(1);
     const rejectedIndex = code.indexOf('@ai-gen rejected');
@@ -481,10 +503,10 @@ def next_func():
 `;
       const matches = await findAiGenDiagnostics(code, pythonOptions);
       expect(matches).toHaveLength(1);
-      
+
       const blockStart = code.indexOf('x = 1');
       const ifStart = code.indexOf('if x:');
-      
+
       // Conservative behavior: Stops at sibling 'if x'
       expect(matches[0].codeStartOffset).toBe(blockStart);
       expect(matches[0].codeEndOffset).toBeGreaterThanOrEqual(blockStart);
@@ -503,9 +525,9 @@ def test():
 `;
       const matches = await findAiGenDiagnostics(code, pythonOptions);
       expect(matches).toHaveLength(1);
-      
+
       const commentStart = code.indexOf('# This comment');
-      
+
       // Conservative behavior: Stops before sibling comment
       expect(matches[0].codeEndOffset).toBeLessThanOrEqual(commentStart);
     });
@@ -540,9 +562,9 @@ echo "hello"
       const code = '# @ai-gen\nline1\nline2';
       const matches = await findAiGenDiagnostics(code, hashOptions);
       expect(matches).toHaveLength(1);
-      
+
       const line1Start = code.indexOf('line1');
-      
+
       expect(matches[0].codeStartOffset).toBeLessThanOrEqual(line1Start);
       // Relaxed check: ensure it highlights at least line1, and doesn't go beyond file
       expect(matches[0].codeEndOffset).toBeGreaterThan(line1Start);
@@ -582,12 +604,142 @@ function test2() {}
 `;
       const matches = await findAiGenDiagnostics(code, { includeAllowed: true });
       expect(matches).toHaveLength(2);
-      
+
       const allowed = matches.find(m => m.type === 'allowed');
       const warning = matches.find(m => m.type === 'warning');
-      
+
       expect(allowed).toBeDefined();
       expect(warning).toBeDefined();
     });
+  });
+});
+
+describe('Extension highlight cleanup', () => {
+  it('clears stale diagnostics and decorations for unsupported language documents', async () => {
+    vi.resetModules();
+
+    const diagnosticDelete = vi.fn();
+    const createDisposable = () => ({ dispose: vi.fn() });
+
+    const workspaceConfig = {
+      get: vi.fn((key: string) => {
+        switch (key) {
+          case 'showReviewedIndicators':
+            return false;
+          case 'detectInlineComments':
+            return true;
+          case 'detectFileLevelComments':
+            return true;
+          case 'tag':
+            return '@ai-gen';
+          case 'allowedStates':
+            return ['ok'];
+          case 'rejectedStates':
+            return ['rejected', 'reject'];
+          case 'warningColor':
+            return 'rgba(255, 215, 0, 0.1)';
+          case 'rejectedColor':
+            return 'rgba(255, 0, 0, 0.1)';
+          case 'allowedColor':
+            return 'rgba(0, 77, 255, 0.1)';
+          case 'reviewedIndicatorStyle':
+            return 'gutter';
+          default:
+            return undefined;
+        }
+      }),
+      update: vi.fn(async () => undefined)
+    };
+
+    const workspace = {
+      getConfiguration: vi.fn(() => workspaceConfig),
+      onDidOpenTextDocument: vi.fn((callback: unknown) => {
+        (workspace.onDidOpenTextDocument as unknown as { _callback?: unknown })._callback = callback;
+        return createDisposable();
+      }),
+      onDidChangeTextDocument: vi.fn(() => createDisposable()),
+      onDidChangeConfiguration: vi.fn(() => createDisposable()),
+      onDidCloseTextDocument: vi.fn(() => createDisposable())
+    };
+
+    const window = {
+      activeTextEditor: undefined,
+      visibleTextEditors: [] as unknown[],
+      onDidChangeActiveTextEditor: vi.fn(() => createDisposable()),
+      onDidChangeVisibleTextEditors: vi.fn(() => createDisposable()),
+      createTextEditorDecorationType: vi.fn(() => ({ dispose: vi.fn() })),
+      showInformationMessage: vi.fn()
+    };
+
+    const languages = {
+      createDiagnosticCollection: vi.fn(() => ({
+        set: vi.fn(),
+        delete: diagnosticDelete,
+        clear: vi.fn(),
+        dispose: vi.fn()
+      }))
+    };
+
+    const commands = {
+      registerCommand: vi.fn(() => createDisposable())
+    };
+
+    class CancellationTokenSource {
+      token = { isCancellationRequested: false };
+      cancel = vi.fn(() => {
+        this.token.isCancellationRequested = true;
+      });
+      dispose = vi.fn();
+    }
+
+    vi.doMock('vscode', () => ({
+      workspace,
+      window,
+      languages,
+      commands,
+      ['CancellationTokenSource']: CancellationTokenSource,
+      ['ConfigurationTarget']: { ['Global']: 1 },
+      ['OverviewRulerLane']: { ['Left']: 1 },
+      ['Uri']: {
+        parse: (value: string) => ({ toString: () => value })
+      }
+    }));
+
+    const { activate, deactivate } = await import('./extension');
+
+    const context = { subscriptions: [] as { dispose: () => void }[] } as unknown as Parameters<typeof activate>[0];
+    activate(context);
+
+    const openHandler = (workspace.onDidOpenTextDocument as unknown as { _callback?: (doc: unknown) => void })._callback;
+    expect(openHandler).toBeTypeOf('function');
+
+    const uri = { toString: () => 'file:///tmp/sample.txt' };
+    const document = {
+      uri,
+      languageId: 'plaintext',
+      version: 1,
+      getText: () => 'hello'
+    };
+
+    const setDecorations = vi.fn();
+    const editor = {
+      document,
+      setDecorations
+    };
+
+    (window.visibleTextEditors as unknown[]).push(editor);
+
+    openHandler?.(document);
+
+    expect(diagnosticDelete).toHaveBeenCalledWith(uri);
+    expect(setDecorations).toHaveBeenCalledTimes(3);
+
+    for (const [, ranges] of setDecorations.mock.calls) {
+      expect(ranges).toEqual([]);
+    }
+
+    deactivate();
+    vi.doUnmock('vscode');
+    vi.resetModules();
   });
 });

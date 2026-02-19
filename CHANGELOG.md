@@ -2,6 +2,25 @@
 
 All notable changes to the Ack-AI extension will be documented in this file.
 
+## [1.0.2] - 2026-02-19
+
+### Performance Improvements
+
+- **Cached runtime analyzer settings** - Reduced repeated configuration lookups during diagnostics updates for better responsiveness while typing
+- **Cached compiled tag regexes** - Reused compiled tag regex by tag value to reduce RegExp allocations in hot paths
+- **Deduplicated visible editor updates** - Avoided re-processing the same document multiple times when shown in split editors
+
+### Bug Fixes
+
+- **Fixed async analyzer regex race** - Each analysis pass now uses isolated working regex instances to prevent intermittent cross-document highlight misses
+- **Fixed stale highlight cleanup** - Unsupported language documents now clear diagnostics and all decorations immediately
+- **Fixed tag underline range** - Underline now targets only the tag token (e.g. `@ai-gen`) and no longer includes trailing comment syntax like `*/`
+
+### Developer Experience
+
+- **Added Extension Host launch config** - Included `.vscode/launch.json` configuration for correct extension debugging in VS Code (instead of running with raw Node)
+- **Added regression coverage** - New tests cover unsupported-language highlight cleanup and tag-only underline behavior
+
 ## [1.0.1] - 2026-02-03
 
 ### Bug Fixes
